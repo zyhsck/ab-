@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       input_json:
-        description: 'JSON containing model path and image Base64 (e.g., {"model":"watchs/RedmiWatch5/test/rw5.fprj","file":"base64string"})'
+        description: 'JSON containing model path and image Base64'
         required: true
 
 jobs:
@@ -43,18 +43,27 @@ jobs:
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
           [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
 
-      # 4. 设置Python环境
+      # 4. 创建必要的输出目录
+      - name: Create output directories
+        run: |
+          # 创建编译工具需要的输出目录
+          New-Item -ItemType Directory -Path "project\output" -Force
+          
+          # 创建Python脚本的输出目录
+          New-Item -ItemType Directory -Path "output" -Force
+
+      # 5. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 5. 运行Python脚本
+      # 6. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 6. 创建Release并获取下载链接
+      # 7. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
