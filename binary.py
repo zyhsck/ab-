@@ -1,6 +1,5 @@
 import os
 import mmap
-import struct
 
 class WatchfaceBinary:
     def __init__(self, path):
@@ -8,10 +7,7 @@ class WatchfaceBinary:
         self.file_size = os.path.getsize(path)
         
     def setId(self, id):
-        """
-        设置表盘ID
-        :param id: 9位ASCII字符的表盘ID
-        """
+        """设置表盘ID"""
         if len(id) != 9:
             raise ValueError("ID must be 9 characters long")
         
@@ -34,16 +30,12 @@ class WatchfaceBinary:
                     mm[id_position:id_position+9] = id.encode('ascii')
     
     def _find_id_position(self, mm):
-        """
-        查找可能的ID位置
-        :param mm: 内存映射对象
-        :return: ID位置或None
-        """
-        # 尝试固定位置40（原始假设）
+        """查找可能的ID位置"""
+        # 尝试固定位置40
         if len(mm) >= 49:  # 40 + 9
             return 40
         
-        # 尝试搜索特征字节 "ID:"
+        # 尝试搜索特征字节
         signature = b"ID:"
         pos = mm.find(signature)
         if pos != -1 and pos + len(signature) + 9 <= len(mm):
@@ -56,11 +48,7 @@ class WatchfaceBinary:
         return None
     
     def _append_id(self, mm, id):
-        """
-        在文件末尾添加ID字段
-        :param mm: 内存映射对象
-        :param id: 9位ASCII字符的表盘ID
-        """
+        """在文件末尾添加ID字段"""
         # 创建新的ID字段
         id_field = b"ID:" + id.encode('ascii')
         
