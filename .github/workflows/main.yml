@@ -53,11 +53,36 @@ jobs:
       - name: Run Python script
         run: |
           python compile_watchface.py
+            # 在运行Python脚本后添加
+      - name: Debug output file
+        run: |
+          $file = Get-ChildItem -Path "output" -Filter "*.face"
+          if ($file) {
+              Write-Host "Output file size: $($file.Length) bytes"
+              # 输出文件头部
+              $header = Get-Content -Path $file.FullName -Encoding Byte -TotalCount 32
+              Write-Host "File header: $header"
+          } else {
+              Write-Error "No output file found"
+          }
 
-      # 6. 创建Release并获取下载链接
+      # 6. 验证输出文件
+      - name: Verify output file
+        run: |
+          if (Test-Path "output\*.face") {
+              $file = Get-ChildItem -Path "output" -Filter "*.face"
+              Write-Host "Output file exists: $($file.FullName)"
+              Write-Host "File size: $($file.Length) bytes"
+          } else {
+              Write-Error "No output file found"
+              exit 1
+          }
+
+      # 7. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
+        if: success()
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
