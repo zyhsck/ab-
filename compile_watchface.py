@@ -4,6 +4,7 @@ import io
 import logging
 import pathlib
 import subprocess
+import shutil
 from binary import WatchfaceBinary
 
 # 强制UTF-8编码并处理错误字符
@@ -90,22 +91,22 @@ class WatchfaceCompiler:
                 logging.error("Compiler tool not found")
                 return False
             
-            # 准备命令参数
+            # 准备命令参数 - 修改输出目录为当前目录
             cmd = [
                 str(compile_tool),
                 "-b",
-                str(self.project_path),
-                "output",
+                str(self.project_path).replace("\\", "/"),
+                ".",  # 关键修改：输出到当前目录
                 output_filename,
                 "1461256429"
             ]
             
             logging.info(f"Executing command: {' '.join(cmd)}")
             
-            # 使用subprocess执行命令
+            # 使用subprocess执行命令 - 在项目目录下运行
             result = subprocess.run(
                 cmd,
-                cwd=str(self.output_dir),
+                cwd=str(self.project_path.parent),
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -131,11 +132,17 @@ class WatchfaceCompiler:
 
     def _process_output(self, output_file):
         """验证并处理输出文件"""
-        if not output_file.exists():
-            logging.error(f"Output file not generated: {output_file}")
+        # 编译工具在当前目录生成输出文件
+        actual_output_file = self.project_path.parent / output_file.name
+        
+        if not actual_output_file.exists():
+            logging.error(f"Output file not generated: {actual_output_file}")
             return False
             
         try:
+            # 移动文件到输出目录
+            shutil.move(str(actual_output_file), str(output_file))
+            
             # 设置表盘ID
             binary = WatchfaceBinary(str(output_file))
             binary.setId("123456789")
@@ -151,7 +158,7 @@ if __name__ == "__main__":
     try:
         # 使用固定路径
         compiler = WatchfaceCompiler(
-            project_path="project/fprj.fprj",  # 修改为项目目录下的文件
+            project_path="project/fprj.fprj",
             output_dir="output"
         )
         
