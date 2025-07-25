@@ -17,27 +17,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 增加系统虚拟内存
+      # 2. 增加虚拟内存
       - name: Increase virtual memory
         run: |
-          # 设置页面文件
-          $pageFilePath = "C:\pagefile.sys"
-          $initialSize = 4096
-          $maximumSize = 8192
-          
-          # 设置虚拟内存
-          $computer = Get-WmiObject Win32_ComputerSystem -EnableAllPrivileges
-          $computer.AutomaticManagedPagefile = $false
-          $computer.Put()
-          
-          $pageFile = Get-WmiObject -Query "SELECT * FROM Win32_PageFileSetting WHERE Name='$pageFilePath'"
-          if ($null -eq $pageFile) {
-              $pageFile = ([wmiclass]"Win32_PageFileSetting").CreateInstance()
-              $pageFile.Name = $pageFilePath
-          }
-          $pageFile.InitialSize = $initialSize
-          $pageFile.MaximumSize = $maximumSize
-          $pageFile.Put()
+          wmic computersystem set AutomaticManagedPagefile=False
+          wmic pagefileset create name="C:\pagefile.sys"
+          wmic pagefileset where name="C:\pagefile.sys" set InitialSize=4096,MaximumSize=8192
+          wmic pagefileset list brief
+          echo "Virtual memory increased to 4096-8192 MB"
 
       # 3. 解析JSON输入
       - name: Parse JSON input
@@ -71,17 +58,12 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 6. 安装Python依赖
-      - name: Install Python dependencies
-        run: |
-          pip install psutil
-
-      # 7. 运行Python脚本
+      # 6. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 8. 创建Release并获取下载链接
+      # 7. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
