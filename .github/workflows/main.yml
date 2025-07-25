@@ -1,66 +1,48 @@
-name: Process Watch Face
+name: Generate Watch Face
 on:
   workflow_dispatch:
     inputs:
       input_json:
-        description: 'JSON containing model path and image Base64 (e.g., {"model":"watchs/RedmiWatch5/test/rw5.fprj","file":"base64string"})'
+        description: 'JSON containing model path and image Base64'
         required: true
 
 jobs:
-  process:
+  generate:
     runs-on: windows-latest
-    strategy:
-      max-parallel: 1  # 减少并行任务
-    env:
-      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1  # .NET优化
     permissions:
       contents: write
       
     steps:
-      # 1. 安装ImageMagick
-      - name: Install ImageMagick
-        run: |
-          choco install imagemagick -y
-          refreshenv
-      
-      # 2. 检出代码
+      # 1. 检出代码
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 3. 解析JSON输入并提取参数
+      # 2. 解析JSON输入
       - name: Parse JSON input
         id: parse-json
         run: |
           $jsonInput = '${{ github.event.inputs.input_json }}' | ConvertFrom-Json
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
-          echo "project_dir=$(Split-Path -Path $($jsonInput.model) -Parent)" >> $env:GITHUB_OUTPUT
 
-      # 4. 复制整个项目目录到工作目录
-      - name: Copy entire project directory
+      # 3. 准备项目文件
+      - name: Prepare project
         run: |
           # 创建项目目录
           $projectDir = "project"
           New-Item -ItemType Directory -Path $projectDir -Force
           
-          # 复制整个项目目录
-          $sourceDir = "${{ steps.parse-json.outputs.project_dir }}"
-          Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
+          # 复制并重命名FPRJ文件
+          Copy-Item -Path "${{ steps.parse-json.outputs.fprj_path }}" -Destination "$projectDir\fprj.fprj" -Force
           
-          # 重命名FPRJ文件
-          $fprjFile = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Leaf
-          Rename-Item -Path "$projectDir\$fprjFile" -NewName "fprj.fprj" -Force
-          
-          # 验证文件
-          if (-not (Test-Path "$projectDir\fprj.fprj")) {
-              Write-Error "Failed to rename FPRJ file"
-              exit 1
-          }
+          # 创建图片目录
+          $imageDir = "$projectDir\images"
+          New-Item -ItemType Directory -Path $imageDir -Force
           
           echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
 
-      # 5. 优化并替换图片
-      - name: Replace and optimize image
+      # 4. 替换图片（使用.NET方法）
+      - name: Replace image
         run: |
           $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
           $imageDir = "$projectDir\images"
@@ -75,18 +57,29 @@ jobs:
           $tempImage = "$env:TEMP\temp.png"
           [IO.File]::WriteAllBytes($tempImage, $bytes)
           
-          # 优化图片尺寸和质量
-          magick convert $tempImage -resize 320x320 -quality 80 "$imageDir\pic.png"
+          # 使用.NET方法压缩图片
+          Add-Type -AssemblyName System.Drawing
+          $image = [System.Drawing.Image]::FromFile($tempImage)
+          
+          # 创建缩略图
+          $thumb = $image.GetThumbnailImage(320, 320, $null, [IntPtr]::Zero)
+          $thumb.Save("$imageDir\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          
+          # 清理资源
+          $image.Dispose()
+          $thumb.Dispose()
           
           # 验证图片
           if (-not (Test-Path "$imageDir\pic.png")) {
               Write-Error "Failed to save image"
               exit 1
           }
-          
-          # 输出图片信息
-          $imageInfo = magick identify "$imageDir\pic.png"
-          Write-Host "Optimized image info: $imageInfo"
+
+      # 5. 创建必要的输出目录
+      - name: Create output directories
+        run: |
+          New-Item -ItemType Directory -Path "project\output" -Force
+          New-Item -ItemType Directory -Path "output" -Force
 
       # 6. 设置Python环境
       - name: Set up Python
@@ -96,26 +89,13 @@ jobs:
 
       # 7. 运行Python脚本
       - name: Run Python script
-        env:
-          PYTHONIOENCODING: utf-8
         run: |
-          # 调试：列出目录结构
-          Get-ChildItem -Recurse
-          
-          # 运行编译脚本
           python compile_watchface.py
-          
-          # 调试：检查输出文件
-          if (Test-Path "output\*.face") {
-              Write-Host "Output file exists"
-          } else {
-              Write-Host "Output file not found"
-          }
 
-      # 8. 创建Release并上传
-      - name: Create Release and Upload Asset
+      # 8. 创建Release并获取下载链接
+      - name: Create Release and Get URL
+        id: create-release
         uses: softprops/action-gh-release@v2
-        if: success()
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
@@ -123,16 +103,6 @@ jobs:
           files: output/*.face
           draft: false
           prerelease: false
-
-      # 9. 输出下载链接
-      - name: Output Release URL
-        run: |
-          $outputFile = Get-ChildItem -Path "output" -Filter "*.face" | Select-Object -First 1
-          if ($null -eq $outputFile) {
-              Write-Error "No output file found"
-              exit 1
-          }
-          
-          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/$($outputFile.Name)"
-          echo "Download URL: $downloadUrl"
-          echo "DOWNLOAD_URL=$downloadUrl" >> $env:GITHUB_ENV
+      
+    outputs:
+      download_url: ${{ steps.create-release.outputs.url }}
