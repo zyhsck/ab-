@@ -1,14 +1,20 @@
 import os
+import sys
+import io
 import logging
 import pathlib
 import subprocess
-from binary import WatchfaceBinary
+from utils.binary import WatchfaceBinary
+
+# 强制UTF-8编码并处理错误字符
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # 配置日志系统
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 class WatchfaceCompiler:
@@ -26,10 +32,10 @@ class WatchfaceCompiler:
             # 确保输出目录存在
             self.output_dir.mkdir(parents=True, exist_ok=True)
             
-            logging.info(f"项目路径: {self.project_path}")
-            logging.info(f"输出目录: {self.output_dir}")
+            logging.info(f"Project path: {self.project_path}")
+            logging.info(f"Output directory: {self.output_dir}")
         except Exception as e:
-            logging.error(f"初始化失败: {str(e)}", exc_info=True)
+            logging.error(f"Initialization failed: {str(e)}", exc_info=True)
             raise
 
     def compile(self):
@@ -54,40 +60,47 @@ class WatchfaceCompiler:
             return self._process_output(output_file)
             
         except Exception as e:
-            logging.error(f"编译过程异常: {str(e)}", exc_info=True)
+            logging.error(f"Compilation error: {str(e)}", exc_info=True)
             return False
 
     def _validate_paths(self):
         """验证所有必需路径"""
+        # 验证项目文件
         if not self.project_path.exists():
-            logging.error(f"项目文件不存在: {self.project_path}")
+            logging.error(f"Project file not found: {self.project_path}")
             return False
             
-        # 编译工具路径 - 修改为相对路径
-        compile_tool = "compile.exe"
+        # 验证编译工具（位于根目录）
+        compile_tool = pathlib.Path.cwd() / "compile.exe"
+        logging.info(f"Compiler tool path: {compile_tool}")
+        
         if not compile_tool.exists():
-            logging.error(f"编译工具未找到: {compile_tool}")
+            logging.error(f"Compiler tool not found: {compile_tool}")
             return False
-            
+        
         return True
 
     def _run_compile_command(self, output_filename):
         """执行编译命令"""
-        # 编译工具路径
-        compile_tool = "compile.exe"
-        
-        # 准备命令参数
-        cmd = [
-            str(compile_tool),
-            "-b",
-            str(self.project_path),
-            "output",
-            output_filename,
-            "1461256429"
-        ]
-        
         try:
-            logging.info(f"执行命令: {' '.join(cmd)}")
+            # 编译工具路径（根目录）
+            compile_tool = pathlib.Path.cwd() / "compile.exe"
+            
+            if not compile_tool.exists():
+                logging.error("Compiler tool not found")
+                return False
+            
+            # 准备命令参数
+            cmd = [
+                str(compile_tool),
+                "-b",
+                str(self.project_path),
+                "output",
+                output_filename,
+                "1461256429"
+            ]
+            
+            logging.info(f"Executing command: {' '.join(cmd)}")
             
             # 使用subprocess执行命令
             result = subprocess.run(
@@ -97,28 +110,29 @@ class WatchfaceCompiler:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                encoding='utf-8'
+                encoding='utf-8',
+                shell=True
             )
             
             # 记录输出
             if result.stdout:
-                logging.debug(f"编译输出:\n{result.stdout}")
+                logging.info(f"Compiler output:\n{result.stdout}")
             if result.stderr:
-                logging.debug(f"编译错误:\n{result.stderr}")
+                logging.warning(f"Compiler warnings:\n{result.stderr}")
                 
             return True
             
         except subprocess.CalledProcessError as e:
-            logging.error(f"编译失败（退出码 {e.returncode}）:\n{e.stderr}")
+            logging.error(f"Compilation failed (exit code {e.returncode}):\n{e.stderr}")
             return False
         except Exception as e:
-            logging.error(f"命令执行异常: {str(e)}")
+            logging.error(f"Command execution error: {str(e)}")
             return False
 
     def _process_output(self, output_file):
         """验证并处理输出文件"""
         if not output_file.exists():
-            logging.error(f"输出文件未生成: {output_file}")
+            logging.error(f"Output file not generated: {output_file}")
             return False
             
         try:
@@ -126,10 +140,10 @@ class WatchfaceCompiler:
             binary = WatchfaceBinary(str(output_file))
             binary.setId("123456789")
             
-            logging.info(f"表盘文件生成成功: {output_file}")
+            logging.info(f"Watch face file generated: {output_file}")
             return True
         except Exception as e:
-            logging.error(f"设置表盘ID失败: {str(e)}")
+            logging.error(f"Failed to set watch face ID: {str(e)}")
             return False
 
 
@@ -142,8 +156,8 @@ if __name__ == "__main__":
         )
         
         if compiler.compile():
-            print(" 编译成功")
+            print("Compile success")
         else:
-            print(" 编译失败")
+            print("Compile failed")
     except Exception as e:
-        print(f" 程序异常: {str(e)}")
+        print(f"Program error: {str(e)}")
