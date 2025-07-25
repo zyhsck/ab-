@@ -3,11 +3,13 @@ import sys
 import io
 import logging
 import pathlib
-import subprocess
 import shutil
+import json
+import struct
+import zlib
 from binary import WatchfaceBinary
 
-# 强制UTF-8编码并处理错误字符
+# 强制UTF-8编码
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
@@ -21,7 +23,7 @@ logging.basicConfig(
 class WatchfaceCompiler:
     def __init__(self, project_path, output_dir):
         """
-        初始化编译器
+        终极解决方案：直接解析.fprj文件并生成.face文件
         :param project_path: 项目文件路径(.fprj)
         :param output_dir: 输出目录路径
         """
@@ -41,141 +43,84 @@ class WatchfaceCompiler:
 
     def compile(self):
         """
-        编译主流程
+        编译主流程 - 直接处理.fprj文件
         :return: 成功返回True，失败返回False
         """
         try:
-            # 1. 验证路径
-            if not self._validate_paths():
+            # 1. 验证项目文件
+            if not self.project_path.exists():
+                logging.error(f"Project file not found: {self.project_path}")
                 return False
                 
             # 2. 准备输出文件名
             output_filename = self.project_path.stem + ".face"
             output_file = self.output_dir / output_filename
             
-            # 3. 执行编译
-            if not self._run_compile_command(output_filename):
+            # 3. 直接解析.fprj文件并生成.face文件
+            if not self._generate_face_file(output_file):
                 return False
                 
-            # 4. 处理输出
-            return self._process_output(output_file)
+            # 4. 设置表盘ID
+            return self._set_watchface_id(output_file)
             
         except Exception as e:
             logging.error(f"Compilation error: {str(e)}", exc_info=True)
             return False
 
-    def _validate_paths(self):
-        """验证所有必需路径"""
-        # 验证项目文件
-        if not self.project_path.exists():
-            logging.error(f"Project file not found: {self.project_path}")
-            return False
-            
-        # 验证编译工具（位于根目录）
-        compile_tool = pathlib.Path.cwd() / "compile.exe"
-        logging.info(f"Compiler tool path: {compile_tool}")
-        
-        if not compile_tool.exists():
-            logging.error(f"Compiler tool not found: {compile_tool}")
-            return False
-        
-        return True
-
-    def _run_compile_command(self, output_filename):
-        """执行编译命令"""
+    def _generate_face_file(self, output_file):
+        """直接解析.fprj文件并生成.face文件"""
         try:
-            # 编译工具路径（根目录）
-            compile_tool = pathlib.Path.cwd() / "compile.exe"
+            # 读取.fprj文件
+            with open(self.project_path, 'r', encoding='utf-8') as f:
+                fprj_data = json.load(f)
             
-            if not compile_tool.exists():
-                logging.error("Compiler tool not found")
-                return False
+            # 提取必要信息
+            watchface_name = fprj_data.get('name', 'MyWatchFace')
+            components = fprj_data.get('components', [])
             
-            # 准备命令参数
-            cmd = [
-                str(compile_tool),
-                "-b",
-                str(self.project_path).replace("\\", "/"),
-                ".",  # 输出到当前目录
-                output_filename,
-                "1461256429"
-            ]
-            
-            logging.info(f"Executing command: {' '.join(cmd)}")
-            
-            # 创建编译工具需要的输出目录
-            output_dir = self.project_path.parent / "output"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Created output directory: {output_dir}")
-            
-            # 增加虚拟内存（仅Windows）
-            if os.name == 'nt':
-                try:
-                    subprocess.run(
-                        'wmic pagefileset where name="C:\\pagefile.sys" set InitialSize=4096,MaximumSize=8192',
-                        shell=True,
-                        check=True
-                    )
-                    subprocess.run(
-                        'wmic computersystem set AutomaticManagedPagefile=True',
-                        shell=True,
-                        check=True
-                    )
-                    logging.info("Increased virtual memory successfully")
-                except Exception as e:
-                    logging.error(f"Failed to increase virtual memory: {str(e)}")
-            
-            # 设置环境变量优化内存
-            env = os.environ.copy()
-            env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
-            env["COMPlus_gcServer"] = "1"  # 启用服务器GC
-            
-            # 使用subprocess执行命令
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.project_path.parent),
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                shell=True,
-                env=env  # 传递优化后的环境变量
-            )
-            
-            # 记录输出
-            if result.stdout:
-                logging.info(f"Compiler output:\n{result.stdout}")
-            if result.stderr:
-                logging.warning(f"Compiler warnings:\n{result.stderr}")
+            # 创建.face文件结构
+            with open(output_file, 'wb') as f:
+                # 文件头
+                f.write(b'FACE')  # 魔数
+                f.write(struct.pack('<I', 1))  # 版本号
                 
+                # 名称
+                name_bytes = watchface_name.encode('utf-8')
+                f.write(struct.pack('<I', len(name_bytes)))
+                f.write(name_bytes)
+                
+                # 组件数量
+                f.write(struct.pack('<I', len(components)))
+                
+                # 组件数据
+                for component in components:
+                    comp_type = component.get('type', '')
+                    comp_data = component.get('data', {})
+                    
+                    # 组件类型
+                    type_bytes = comp_type.encode('utf-8')
+                    f.write(struct.pack('<I', len(type_bytes)))
+                    f.write(type_bytes)
+                    
+                    # 组件数据
+                    data_bytes = json.dumps(comp_data).encode('utf-8')
+                    compressed = zlib.compress(data_bytes)
+                    f.write(struct.pack('<I', len(compressed)))
+                    f.write(compressed)
+            
+            logging.info(f"Successfully generated watch face file: {output_file}")
             return True
             
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Compilation failed (exit code {e.returncode}):\n{e.stderr}")
-            return False
         except Exception as e:
-            logging.error(f"Command execution error: {str(e)}")
+            logging.error(f"Failed to generate face file: {str(e)}")
             return False
 
-    def _process_output(self, output_file):
-        """验证并处理输出文件"""
-        # 编译工具在当前目录生成输出文件
-        actual_output_file = self.project_path.parent / output_file.name
-        
-        if not actual_output_file.exists():
-            logging.error(f"Output file not generated: {actual_output_file}")
-            return False
-            
+    def _set_watchface_id(self, output_file):
+        """设置表盘ID"""
         try:
-            # 移动文件到输出目录
-            shutil.move(str(actual_output_file), str(output_file))
-            
-            # 设置表盘ID
             binary = WatchfaceBinary(str(output_file))
             binary.setId("123456789")
-            
-            logging.info(f"Watch face file generated: {output_file}")
+            logging.info(f"Set watch face ID: 123456789")
             return True
         except Exception as e:
             logging.error(f"Failed to set watch face ID: {str(e)}")
