@@ -108,6 +108,23 @@ class WatchfaceCompiler:
             output_dir.mkdir(parents=True, exist_ok=True)
             logging.info(f"Created output directory: {output_dir}")
             
+            # 增加虚拟内存（仅Windows）
+            if os.name == 'nt':
+                try:
+                    subprocess.run(
+                        'wmic pagefileset where name="C:\\pagefile.sys" set InitialSize=4096,MaximumSize=8192',
+                        shell=True,
+                        check=True
+                    )
+                    subprocess.run(
+                        'wmic computersystem set AutomaticManagedPagefile=True',
+                        shell=True,
+                        check=True
+                    )
+                    logging.info("Increased virtual memory successfully")
+                except Exception as e:
+                    logging.error(f"Failed to increase virtual memory: {str(e)}")
+            
             # 设置环境变量优化内存
             env = os.environ.copy()
             env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
