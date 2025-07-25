@@ -78,7 +78,7 @@ class WatchfaceCompiler:
             logging.error(f"Project file is empty: {self.project_path}")
             return False
             
-        logging.info(f"Project file size: $file_size bytes")
+        logging.info(f"Project file size: {file_size} bytes")
         return True
 
     def _generate_face_file(self, output_file):
@@ -99,32 +99,41 @@ class WatchfaceCompiler:
                 logging.error(f"XML parse error: {str(e)}")
                 return False
             
-            # 提取必要信息
+            # 提取表盘名称
             watchface_name = root.attrib.get('name', 'MyWatchFace')
+            
+            # 提取所有组件
             components = []
             
-            # 提取组件信息
-            for component in root.findall('.//Component'):
-                comp_type = component.attrib.get('type', '')
+            # 递归遍历所有元素
+            def traverse_element(element):
+                comp_type = element.tag
                 comp_data = {}
                 
-                # 提取属性
-                for key, value in component.attrib.items():
-                    if key != 'type':
-                        comp_data[key] = value
-                
-                # 提取子元素
-                for child in component:
-                    comp_data[child.tag] = child.text
-                
-                # 确保组件数据不为空
-                if not comp_data:
-                    logging.warning(f"Component {comp_type} has no data")
-                
-                components.append({
+                # 添加属性
+                for key, value in element.attrib.items():
+                    comp_data[key] = value
+                    
+                # 添加文本内容
+                if element.text and element.text.strip():
+                    comp_data['text'] = element.text.strip()
+                    
+                # 添加子元素
+                children = []
+                for child in element:
+                    children.append(traverse_element(child))
+                    
+                if children:
+                    comp_data['children'] = children
+                    
+                return {
                     'type': comp_type,
                     'data': comp_data
-                })
+                }
+            
+            # 遍历根元素的所有子元素
+            for child in root:
+                components.append(traverse_element(child))
             
             logging.info(f"Watchface name: {watchface_name}")
             logging.info(f"Found {len(components)} components")
@@ -155,15 +164,22 @@ class WatchfaceCompiler:
                     f.write(struct.pack('<I', len(type_bytes)))
                     f.write(type_bytes)
                     
-                    # 组件数据
-                    try:
-                        data_bytes = json.dumps(comp_data).encode('utf-8')
-                        compressed = zlib.compress(data_bytes)
-                        f.write(struct.pack('<I', len(compressed)))
-                        f.write(compressed)
-                    except Exception as e:
-                        logging.error(f"Error processing component {i+1}: {str(e)}")
-                        return False
+                    # 如果是图片组件，直接包含图片数据
+                    if comp_type == 'Image':
+                        image_path = self.project_path.parent / "images" / comp_data.get('src', 'pic.png')
+                        if image_path.exists():
+                            with open(image_path, 'rb') as img_file:
+                                image_data = img_file.read()
+                                
+                            # 直接写入图片数据（不压缩）
+                            f.write(struct.pack('<I', len(image_data)))
+                            f.write(image_data)
+                            continue
+                    
+                    # 其他组件数据（不压缩）
+                    data_bytes = json.dumps(comp_data).encode('utf-8')
+                    f.write(struct.pack('<I', len(data_bytes)))
+                    f.write(data_bytes)
             
             # 记录文件大小
             file_size = os.path.getsize(output_file)
