@@ -24,7 +24,7 @@ logging.basicConfig(
 class WatchfaceCompiler:
     def __init__(self, project_path, output_dir):
         """
-        终极解决方案：支持XML格式的.fprj文件
+        终极解决方案：模拟原始编译工具的行为
         :param project_path: 项目文件路径(.fprj)
         :param output_dir: 输出目录路径
         """
@@ -44,7 +44,7 @@ class WatchfaceCompiler:
 
     def compile(self):
         """
-        编译主流程 - 支持XML格式
+        编译主流程 - 模拟原始编译工具
         :return: 成功返回True，失败返回False
         """
         try:
@@ -56,11 +56,17 @@ class WatchfaceCompiler:
             output_filename = self.project_path.stem + ".face"
             output_file = self.output_dir / output_filename
             
-            # 3. 解析.fprj文件并生成.face文件
-            if not self._generate_face_file(output_file):
+            # 3. 直接复制项目结构
+            self._copy_project_structure()
+            
+            # 4. 运行原始编译工具
+            if not self._run_original_compiler(output_filename):
                 return False
                 
-            # 4. 设置表盘ID
+            # 5. 移动输出文件
+            self._move_output_file(output_file)
+            
+            # 6. 设置表盘ID
             return self._set_watchface_id(output_file)
             
         except Exception as e:
@@ -81,145 +87,103 @@ class WatchfaceCompiler:
         logging.info(f"Project file size: {file_size} bytes")
         return True
 
-    def _generate_face_file(self, output_file):
-        """解析XML格式的.fprj文件并生成.face文件"""
+    def _copy_project_structure(self):
+        """复制整个项目结构到临时目录"""
         try:
-            # 读取文件内容
-            with open(self.project_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                
-            # 记录前100个字符用于调试
-            sample = content[:100] if len(content) > 100 else content
-            logging.info(f"FPRJ file sample: {sample}")
+            # 创建临时工作目录
+            self.work_dir = pathlib.Path("work")
+            self.work_dir.mkdir(parents=True, exist_ok=True)
             
-            # 尝试解析XML
-            try:
-                root = ET.fromstring(content)
-            except ET.ParseError as e:
-                logging.error(f"XML parse error: {str(e)}")
+            # 复制整个项目目录
+            shutil.copytree(
+                self.project_path.parent,
+                self.work_dir,
+                dirs_exist_ok=True
+            )
+            
+            logging.info(f"Copied project to work directory: {self.work_dir}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to copy project structure: {str(e)}")
+            return False
+
+    def _run_original_compiler(self, output_filename):
+        """运行原始编译工具"""
+        try:
+            # 编译工具路径（根目录）
+            compile_tool = pathlib.Path.cwd() / "compile.exe"
+            
+            if not compile_tool.exists():
+                logging.error("Compiler tool not found")
                 return False
             
-            # 打印XML结构用于调试
-            logging.info("XML structure:")
-            for i, child in enumerate(root):
-                logging.info(f"Element {i+1}: {child.tag}")
-                for key, value in child.attrib.items():
-                    logging.info(f"  Attribute: {key}={value}")
-                for subchild in child:
-                    logging.info(f"  Child: {subchild.tag}={subchild.text}")
+            # 准备命令参数
+            cmd = [
+                str(compile_tool),
+                "-b",
+                str(self.work_dir / self.project_path.name),
+                "output",
+                output_filename,
+                "1461256429"
+            ]
             
-            # 提取表盘名称
-            watchface_name = root.attrib.get('name', 'MyWatchFace')
+            logging.info(f"Executing command: {' '.join(cmd)}")
             
-            # 提取所有图片资源
-            images = []
-            for image in root.findall('.//Image'):
-                src = image.attrib.get('src', '')
-                if src:
-                    images.append(src)
-                    logging.info(f"Found image: {src}")
+            # 创建输出目录
+            output_dir = self.work_dir / "output"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Created output directory: {output_dir}")
             
-            # 提取所有组件
-            components = []
-            for component in root.findall('.//Component'):
-                comp_type = component.attrib.get('type', '')
-                comp_data = {}
-                
-                # 提取属性
-                for key, value in component.attrib.items():
-                    if key != 'type':
-                        comp_data[key] = value
-                
-                # 提取子元素
-                for child in component:
-                    comp_data[child.tag] = child.text
-                
-                components.append({
-                    'type': comp_type,
-                    'data': comp_data
-                })
+            # 设置环境变量优化内存
+            env = os.environ.copy()
+            env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
+            env["COMPlus_gcServer"] = "1"  # 启用服务器GC
+            env["COMPlus_gcConcurrent"] = "1"  # 启用并发GC
             
-            logging.info(f"Watchface name: {watchface_name}")
-            logging.info(f"Found {len(images)} images")
-            logging.info(f"Found {len(components)} components")
+            # 使用subprocess执行命令
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.work_dir),
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                shell=True,
+                env=env
+            )
             
-            # 创建.face文件结构
-            with open(output_file, 'wb') as f:
-                # 文件头
-                f.write(b'FACE')  # 魔数
-                f.write(struct.pack('<I', 1))  # 版本号
+            # 记录输出
+            if result.stdout:
+                logging.info(f"Compiler output:\n{result.stdout}")
+            if result.stderr:
+                logging.warning(f"Compiler warnings:\n{result.stderr}")
                 
-                # 名称
-                name_bytes = watchface_name.encode('utf-8')
-                f.write(struct.pack('<I', len(name_bytes)))
-                f.write(name_bytes)
-                
-                # 图片数量
-                f.write(struct.pack('<I', len(images)))
-                logging.info(f"Writing {len(images)} images")
-                
-                # 图片数据
-                total_image_size = 0
-                for i, image_src in enumerate(images):
-                    image_path = self.project_path.parent / "images" / image_src
-                    if image_path.exists():
-                        with open(image_path, 'rb') as img_file:
-                            image_data = img_file.read()
-                        
-                        # 写入图片数据
-                        image_size = len(image_data)
-                        f.write(struct.pack('<I', image_size))
-                        f.write(image_data)
-                        total_image_size += image_size
-                        logging.info(f"Included image {i+1}: {image_path} ({image_size} bytes)")
-                    else:
-                        logging.error(f"Image not found: {image_path}")
-                        # 写入空图片占位
-                        f.write(struct.pack('<I', 0))
-                
-                logging.info(f"Total image size: {total_image_size} bytes")
-                
-                # 组件数量
-                f.write(struct.pack('<I', len(components)))
-                logging.info(f"Writing {len(components)} components")
-                
-                # 组件数据
-                total_component_size = 0
-                for i, component in enumerate(components):
-                    comp_type = component['type']
-                    comp_data = component['data']
-                    
-                    logging.debug(f"Processing component {i+1}: {comp_type}")
-                    
-                    # 组件类型
-                    type_bytes = comp_type.encode('utf-8')
-                    type_size = len(type_bytes)
-                    f.write(struct.pack('<I', type_size))
-                    f.write(type_bytes)
-                    
-                    # 组件数据
-                    try:
-                        data_bytes = json.dumps(comp_data).encode('utf-8')
-                        compressed = zlib.compress(data_bytes)
-                        compressed_size = len(compressed)
-                        f.write(struct.pack('<I', compressed_size))
-                        f.write(compressed)
-                        total_component_size += compressed_size
-                        logging.debug(f"Component data size: {compressed_size} bytes")
-                    except Exception as e:
-                        logging.error(f"Error processing component {i+1}: {str(e)}")
-                        return False
-                
-                logging.info(f"Total component size: {total_component_size} bytes")
-            
-            # 记录文件大小
-            file_size = os.path.getsize(output_file)
-            logging.info(f"Generated file size: {file_size} bytes")
-            
             return True
             
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Compilation failed (exit code {e.returncode}):\n{e.stderr}")
+            return False
         except Exception as e:
-            logging.error(f"Failed to generate face file: {str(e)}", exc_info=True)
+            logging.error(f"Command execution error: {str(e)}")
+            return False
+
+    def _move_output_file(self, output_file):
+        """移动输出文件到目标目录"""
+        # 编译工具在工作目录生成输出文件
+        work_output_file = self.work_dir / "output" / output_file.name
+        
+        if not work_output_file.exists():
+            logging.error(f"Output file not generated: {work_output_file}")
+            return False
+            
+        try:
+            # 移动文件到输出目录
+            shutil.move(str(work_output_file), str(output_file))
+            logging.info(f"Moved output file to: {output_file}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to move output file: {str(e)}")
             return False
 
     def _set_watchface_id(self, output_file):
