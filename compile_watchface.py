@@ -3,7 +3,6 @@ import sys
 import io
 import logging
 import pathlib
-import subprocess
 import shutil
 import json
 import struct
@@ -100,11 +99,28 @@ class WatchfaceCompiler:
                 logging.error(f"XML parse error: {str(e)}")
                 return False
             
-            # 提取必要信息
-            watchface_name = root.attrib.get('name', 'MyWatchFace')
-            components = []
+            # 打印XML结构用于调试
+            logging.info("XML structure:")
+            for i, child in enumerate(root):
+                logging.info(f"Element {i+1}: {child.tag}")
+                for key, value in child.attrib.items():
+                    logging.info(f"  Attribute: {key}={value}")
+                for subchild in child:
+                    logging.info(f"  Child: {subchild.tag}={subchild.text}")
             
-            # 提取组件信息
+            # 提取表盘名称
+            watchface_name = root.attrib.get('name', 'MyWatchFace')
+            
+            # 提取所有图片资源
+            images = []
+            for image in root.findall('.//Image'):
+                src = image.attrib.get('src', '')
+                if src:
+                    images.append(src)
+                    logging.info(f"Found image: {src}")
+            
+            # 提取所有组件
+            components = []
             for component in root.findall('.//Component'):
                 comp_type = component.attrib.get('type', '')
                 comp_data = {}
@@ -118,16 +134,13 @@ class WatchfaceCompiler:
                 for child in component:
                     comp_data[child.tag] = child.text
                 
-                # 确保组件数据不为空
-                if not comp_data:
-                    logging.warning(f"Component {comp_type} has no data")
-                
                 components.append({
                     'type': comp_type,
                     'data': comp_data
                 })
             
             logging.info(f"Watchface name: {watchface_name}")
+            logging.info(f"Found {len(images)} images")
             logging.info(f"Found {len(components)} components")
             
             # 创建.face文件结构
@@ -141,44 +154,63 @@ class WatchfaceCompiler:
                 f.write(struct.pack('<I', len(name_bytes)))
                 f.write(name_bytes)
                 
+                # 图片数量
+                f.write(struct.pack('<I', len(images)))
+                logging.info(f"Writing {len(images)} images")
+                
+                # 图片数据
+                total_image_size = 0
+                for i, image_src in enumerate(images):
+                    image_path = self.project_path.parent / "images" / image_src
+                    if image_path.exists():
+                        with open(image_path, 'rb') as img_file:
+                            image_data = img_file.read()
+                        
+                        # 写入图片数据
+                        image_size = len(image_data)
+                        f.write(struct.pack('<I', image_size))
+                        f.write(image_data)
+                        total_image_size += image_size
+                        logging.info(f"Included image {i+1}: {image_path} ({image_size} bytes)")
+                    else:
+                        logging.error(f"Image not found: {image_path}")
+                        # 写入空图片占位
+                        f.write(struct.pack('<I', 0))
+                
+                logging.info(f"Total image size: {total_image_size} bytes")
+                
                 # 组件数量
                 f.write(struct.pack('<I', len(components)))
+                logging.info(f"Writing {len(components)} components")
                 
                 # 组件数据
+                total_component_size = 0
                 for i, component in enumerate(components):
                     comp_type = component['type']
                     comp_data = component['data']
                     
                     logging.debug(f"Processing component {i+1}: {comp_type}")
                     
-                    # 如果是图片组件，直接包含图片数据
-                    if comp_type == 'Image':
-                        image_path = self.project_path.parent / "images" / comp_data.get('src', 'pic.png')
-                        if image_path.exists():
-                            with open(image_path, 'rb') as img_file:
-                                image_data = img_file.read()
-                            
-                            # 直接写入图片数据（不压缩）
-                            f.write(struct.pack('<I', len(image_data)))
-                            f.write(image_data)
-                            logging.info(f"Included image: {image_path} ({len(image_data)} bytes)")
-                            continue
-                    
                     # 组件类型
                     type_bytes = comp_type.encode('utf-8')
-                    f.write(struct.pack('<I', len(type_bytes)))
+                    type_size = len(type_bytes)
+                    f.write(struct.pack('<I', type_size))
                     f.write(type_bytes)
                     
                     # 组件数据
                     try:
                         data_bytes = json.dumps(comp_data).encode('utf-8')
                         compressed = zlib.compress(data_bytes)
-                        f.write(struct.pack('<I', len(compressed)))
+                        compressed_size = len(compressed)
+                        f.write(struct.pack('<I', compressed_size))
                         f.write(compressed)
-                        logging.debug(f"Component data size: {len(compressed)} bytes")
+                        total_component_size += compressed_size
+                        logging.debug(f"Component data size: {compressed_size} bytes")
                     except Exception as e:
                         logging.error(f"Error processing component {i+1}: {str(e)}")
                         return False
+                
+                logging.info(f"Total component size: {total_component_size} bytes")
             
             # 记录文件大小
             file_size = os.path.getsize(output_file)
