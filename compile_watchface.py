@@ -91,19 +91,24 @@ class WatchfaceCompiler:
                 logging.error("Compiler tool not found")
                 return False
             
-            # 准备命令参数 - 修改输出目录为当前目录
+            # 准备命令参数
             cmd = [
                 str(compile_tool),
                 "-b",
                 str(self.project_path).replace("\\", "/"),
-                ".",  # 关键修改：输出到当前目录
+                ".",  # 输出到当前目录
                 output_filename,
                 "1461256429"
             ]
             
             logging.info(f"Executing command: {' '.join(cmd)}")
             
-            # 使用subprocess执行命令 - 在项目目录下运行
+            # 设置环境变量优化内存
+            env = os.environ.copy()
+            env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
+            env["COMPlus_gcServer"] = "1"  # 启用服务器GC
+            
+            # 使用subprocess执行命令
             result = subprocess.run(
                 cmd,
                 cwd=str(self.project_path.parent),
@@ -112,7 +117,8 @@ class WatchfaceCompiler:
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding='utf-8',
-                shell=True
+                shell=True,
+                env=env  # 传递优化后的环境变量
             )
             
             # 记录输出
