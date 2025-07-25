@@ -10,7 +10,7 @@ jobs:
   process:
     runs-on: windows-latest
     permissions:
-      contents: write  # 必需权限
+      contents: write
       
     steps:
       # 1. 检出代码
@@ -26,22 +26,32 @@ jobs:
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
           echo "project_dir=$(Split-Path -Path $($jsonInput.model) -Parent)" >> $env:GITHUB_OUTPUT
 
-      # 3. 准备FPRJ文件
-      - name: Prepare FPRJ file
+      # 3. 复制整个项目目录到工作目录
+      - name: Copy entire project directory
         run: |
-          # 复制FPRJ文件到根目录并重命名
-          Copy-Item -Path "${{ steps.parse-json.outputs.fprj_path }}" -Destination "fprj.fprj" -Force
+          # 创建项目目录
+          $projectDir = "project"
+          New-Item -ItemType Directory -Path $projectDir -Force
           
-          # 验证文件是否存在
-          if (-not (Test-Path "fprj.fprj")) { 
-            Write-Error "Failed to copy FPRJ file"
-            exit 1
+          # 复制整个项目目录
+          $sourceDir = "${{ steps.parse-json.outputs.project_dir }}"
+          Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
+          
+          # 重命名FPRJ文件
+          $fprjFile = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Leaf
+          Rename-Item -Path "$projectDir\$fprjFile" -Destination "$projectDir\fprj.fprj" -Force
+          
+          # 验证文件
+          if (-not (Test-Path "$projectDir\fprj.fprj")) {
+              Write-Error "Failed to rename FPRJ file"
+              exit 1
           }
+          
+          echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
 
       # 4. 替换图片
       - name: Replace image
         run: |
-          # 提取项目目录
           $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
           $imageDir = "$projectDir\images"
           
@@ -69,7 +79,7 @@ jobs:
       # 6. 运行Python脚本
       - name: Run Python script
         env:
-          PYTHONIOENCODING: utf-8  # 强制UTF-8编码
+          PYTHONIOENCODING: utf-8
         run: |
           # 调试：列出目录结构
           Get-ChildItem -Recurse
@@ -89,7 +99,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}  # 使用自定义PAT
+          GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
           tag_name: "face-${{ github.run_id }}"
           files: output/*.face
