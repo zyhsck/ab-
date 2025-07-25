@@ -99,7 +99,7 @@ class WatchfaceCompiler:
                 shutil.rmtree(self.work_dir)
             self.work_dir.mkdir(parents=True, exist_ok=True)
             
-            # 复制项目目录下的所有内容到work_dir
+            # 直接复制项目文件到工作目录根目录
             project_parent = self.project_path.parent
             for item in os.listdir(project_parent):
                 src = project_parent / item
@@ -108,6 +108,12 @@ class WatchfaceCompiler:
                     shutil.copytree(src, dst, dirs_exist_ok=True)
                 else:
                     shutil.copy2(src, dst)
+            
+            # 确保.fprj文件在根目录
+            fprj_file = self.work_dir / self.project_path.name
+            if not fprj_file.exists():
+                logging.error(f"Project file not found in work directory: {fprj_file}")
+                return False
             
             logging.info(f"Copied project contents to work directory: {self.work_dir}")
             return True
@@ -125,20 +131,24 @@ class WatchfaceCompiler:
                 logging.error("Compiler tool not found")
                 return False
             
-            # 准备命令参数
+            # 准备命令参数 - 使用绝对路径
+            project_file = self.work_dir / self.project_path.name
+            output_dir = self.work_dir / "output"
+            
             cmd = [
                 str(compile_tool),
                 "-b",
-                str(self.work_dir / self.project_path.name),
-                "output",
+                str(project_file),
+                str(output_dir),  # 使用绝对路径
                 output_filename,
                 "1461256429"
             ]
             
             logging.info(f"Executing command: {' '.join(cmd)}")
+            logging.info(f"Project file: {project_file}")
+            logging.info(f"Output directory: {output_dir}")
             
             # 创建输出目录
-            output_dir = self.work_dir / "output"
             output_dir.mkdir(parents=True, exist_ok=True)
             logging.info(f"Created output directory: {output_dir}")
             
@@ -168,7 +178,7 @@ class WatchfaceCompiler:
                 logging.warning(f"Compiler warnings:\n{result.stderr}")
                 
             # 检查输出文件是否生成
-            work_output_file = self.work_dir / "output" / output_filename
+            work_output_file = output_dir / output_filename
             if work_output_file.exists():
                 logging.info(f"Output file generated: {work_output_file}")
                 return True
