@@ -17,7 +17,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 解析JSON输入
+      # 2. 安装ImageMagick
+      - name: Install ImageMagick
+        run: |
+          choco install imagemagick -y
+          refreshenv
+
+      # 3. 解析JSON输入
       - name: Parse JSON input
         id: parse-json
         run: |
@@ -25,7 +31,7 @@ jobs:
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
 
-      # 3. 准备项目文件
+      # 4. 准备项目文件
       - name: Prepare project
         run: |
           # 创建项目目录
@@ -39,31 +45,50 @@ jobs:
           $imageDir = "$projectDir\images"
           New-Item -ItemType Directory -Path $imageDir -Force
           
-          # 保存图片
-          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
-          [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
+          echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
 
-      # 4. 创建必要的输出目录
+      # 5. 替换图片（优化）
+      - name: Replace image
+        run: |
+          $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
+          $imageDir = "$projectDir\images"
+          
+          # 解码Base64图片
+          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
+          $tempImage = "$env:TEMP\temp.png"
+          [IO.File]::WriteAllBytes($tempImage, $bytes)
+          
+          # 优化图片尺寸和质量
+          magick convert $tempImage -resize 320x320 -quality 80 "$imageDir\pic.png"
+          
+          # 验证图片
+          if (-not (Test-Path "$imageDir\pic.png")) {
+              Write-Error "Failed to save image"
+              exit 1
+          }
+          
+          # 输出图片信息
+          $imageInfo = magick identify "$imageDir\pic.png"
+          Write-Host "Optimized image info: $imageInfo"
+
+      # 6. 创建必要的输出目录
       - name: Create output directories
         run: |
-          # 创建编译工具需要的输出目录
           New-Item -ItemType Directory -Path "project\output" -Force
-          
-          # 创建Python脚本的输出目录
           New-Item -ItemType Directory -Path "output" -Force
 
-      # 5. 设置Python环境
+      # 7. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 6. 运行Python脚本
+      # 8. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 7. 创建Release并获取下载链接
+      # 9. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
