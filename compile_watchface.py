@@ -4,7 +4,7 @@ import io
 import logging
 import pathlib
 import subprocess
-from utils.binary import WatchfaceBinary
+from binary import WatchfaceBinary
 
 # 强制UTF-8编码并处理错误字符
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
