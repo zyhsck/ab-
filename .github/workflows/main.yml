@@ -37,9 +37,9 @@ jobs:
           $sourceDir = "${{ steps.parse-json.outputs.project_dir }}"
           Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
           
-          # 重命名FPRJ文件
+          # 重命名FPRJ文件（修复参数错误）
           $fprjFile = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Leaf
-          Rename-Item -Path "$projectDir\$fprjFile" -Destination "$projectDir\fprj.fprj" -Force
+          Rename-Item -Path "$projectDir\$fprjFile" -NewName "fprj.fprj" -Force
           
           # 验证文件
           if (-not (Test-Path "$projectDir\fprj.fprj")) {
