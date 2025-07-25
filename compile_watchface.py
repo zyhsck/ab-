@@ -4,7 +4,7 @@ import io
 import logging
 import pathlib
 import shutil
-import subprocess  # 确保导入subprocess
+import subprocess
 import json
 import struct
 import zlib
@@ -99,17 +99,17 @@ class WatchfaceCompiler:
                 shutil.rmtree(self.work_dir)
             self.work_dir.mkdir(parents=True, exist_ok=True)
             
-            # 复制整个项目目录
+            # 复制项目目录下的所有内容到work_dir
             project_parent = self.project_path.parent
             for item in os.listdir(project_parent):
-                s = project_parent / item
-                d = self.work_dir / item
-                if os.path.isdir(s):
-                    shutil.copytree(s, d, dirs_exist_ok=True)
+                src = project_parent / item
+                dst = self.work_dir / item
+                if src.is_dir():
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
                 else:
-                    shutil.copy2(s, d)
+                    shutil.copy2(src, dst)
             
-            logging.info(f"Copied project to work directory: {self.work_dir}")
+            logging.info(f"Copied project contents to work directory: {self.work_dir}")
             return True
         except Exception as e:
             logging.error(f"Failed to copy project structure: {str(e)}")
