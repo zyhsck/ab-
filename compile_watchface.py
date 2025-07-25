@@ -7,7 +7,6 @@ import shutil
 import json
 import struct
 import zlib
-import chardet  # 需要安装: pip install chardet
 from binary import WatchfaceBinary
 
 # 强制UTF-8编码
@@ -81,6 +80,35 @@ class WatchfaceCompiler:
         logging.info(f"Project file size: {file_size} bytes")
         return True
 
+    def _detect_encoding(self, raw_data):
+        """尝试检测文件编码"""
+        # 尝试UTF-8
+        try:
+            content = raw_data.decode('utf-8')
+            return 'utf-8', content
+        except UnicodeDecodeError:
+            pass
+        
+        # 尝试UTF-16
+        try:
+            content = raw_data.decode('utf-16')
+            return 'utf-16', content
+        except UnicodeDecodeError:
+            pass
+        
+        # 尝试常见编码
+        encodings = ['latin-1', 'cp1252', 'gbk', 'iso-8859-1']
+        for encoding in encodings:
+            try:
+                content = raw_data.decode(encoding)
+                return encoding, content
+            except UnicodeDecodeError:
+                continue
+        
+        # 最后尝试UTF-8并忽略错误
+        content = raw_data.decode('utf-8', errors='ignore')
+        return 'unknown', content
+
     def _generate_face_file(self, output_file):
         """直接解析.fprj文件并生成.face文件"""
         try:
@@ -88,29 +116,9 @@ class WatchfaceCompiler:
             with open(self.project_path, 'rb') as f:
                 raw_data = f.read()
                 
-            # 检测编码
-            detection = chardet.detect(raw_data)
-            encoding = detection['encoding'] or 'utf-8'
-            confidence = detection['confidence']
-            
-            logging.info(f"Detected encoding: {encoding} (confidence: {confidence})")
-            
-            # 尝试解码内容
-            try:
-                content = raw_data.decode(encoding)
-            except UnicodeDecodeError as e:
-                logging.error(f"Failed to decode file: {str(e)}")
-                # 尝试其他常见编码
-                for alt_encoding in ['utf-8', 'latin-1', 'cp1252']:
-                    try:
-                        content = raw_data.decode(alt_encoding)
-                        logging.info(f"Successfully decoded with {alt_encoding}")
-                        break
-                    except:
-                        continue
-                else:
-                    logging.error("Failed to decode file with any encoding")
-                    return False
+            # 尝试检测编码
+            encoding, content = self._detect_encoding(raw_data)
+            logging.info(f"Using encoding: {encoding}")
             
             # 记录前100个字符用于调试
             sample = content[:100] if len(content) > 100 else content
