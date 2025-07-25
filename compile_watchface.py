@@ -114,7 +114,7 @@ class WatchfaceCompiler:
 if __name__ == "__main__":
     # 示例用法（测试时建议使用绝对路径）
     compiler = WatchfaceCompiler(
-        project_path=os.path.abspath("src/rw5/rw5.fprj"),
+        project_path=os.path.abspath("fprj.fprj"),
         output_dir=os.path.abspath("output")
     )
     
