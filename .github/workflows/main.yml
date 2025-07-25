@@ -17,28 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 安装或验证ImageMagick
-      - name: Install or verify ImageMagick
-        run: |
-          # 检查是否已安装
-          $imPath = "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
-          if (-not (Test-Path $imPath)) {
-              choco install imagemagick -y
-          }
-          
-          # 验证安装
-          if (Test-Path $imPath) {
-              Write-Host "ImageMagick found at: $imPath"
-          } else {
-              Write-Error "ImageMagick not found"
-              exit 1
-          }
-          
-          # 手动添加到PATH
-          $env:Path += ";C:\Program Files\ImageMagick-7.1.2-Q16-HDRI"
-          echo "PATH=$env:Path" >> $env:GITHUB_ENV
-
-      # 3. 解析JSON输入
+      # 2. 解析JSON输入
       - name: Parse JSON input
         id: parse-json
         run: |
@@ -46,7 +25,7 @@ jobs:
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
 
-      # 4. 准备项目文件
+      # 3. 准备项目文件
       - name: Prepare project
         run: |
           # 创建项目目录
@@ -62,48 +41,58 @@ jobs:
           
           echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
 
-      # 5. 替换图片（优化）
+      # 4. 替换图片（使用.NET方法）
       - name: Replace image
         run: |
           $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
           $imageDir = "$projectDir\images"
+          
+          # 确保图片目录存在
+          if (-not (Test-Path $imageDir)) {
+              New-Item -ItemType Directory -Path $imageDir -Force
+          }
           
           # 解码Base64图片
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
           $tempImage = "$env:TEMP\temp.png"
           [IO.File]::WriteAllBytes($tempImage, $bytes)
           
-          # 使用完整路径调用ImageMagick
-          & "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe" convert $tempImage -resize 320x320 -quality 80 "$imageDir\pic.png"
+          # 使用.NET方法压缩图片
+          Add-Type -AssemblyName System.Drawing
+          $image = [System.Drawing.Image]::FromFile($tempImage)
+          
+          # 创建缩略图
+          $thumb = $image.GetThumbnailImage(320, 320, $null, [IntPtr]::Zero)
+          $thumb.Save("$imageDir\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          
+          # 清理资源
+          $image.Dispose()
+          $thumb.Dispose()
           
           # 验证图片
           if (-not (Test-Path "$imageDir\pic.png")) {
               Write-Error "Failed to save image"
               exit 1
           }
-          
-          # 输出图片信息
-          $imageInfo = & "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe" identify "$imageDir\pic.png"
-          Write-Host "Optimized image info: $imageInfo"
 
-      # 6. 创建必要的输出目录
+      # 5. 创建必要的输出目录
       - name: Create output directories
         run: |
           New-Item -ItemType Directory -Path "project\output" -Force
           New-Item -ItemType Directory -Path "output" -Force
 
-      # 7. 设置Python环境
+      # 6. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 8. 运行Python脚本
+      # 7. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 9. 创建Release并获取下载链接
+      # 8. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
