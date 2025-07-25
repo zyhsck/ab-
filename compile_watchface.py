@@ -7,6 +7,7 @@ import shutil
 import json
 import struct
 import zlib
+import chardet  # 需要安装: pip install chardet
 from binary import WatchfaceBinary
 
 # 强制UTF-8编码
@@ -48,8 +49,7 @@ class WatchfaceCompiler:
         """
         try:
             # 1. 验证项目文件
-            if not self.project_path.exists():
-                logging.error(f"Project file not found: {self.project_path}")
+            if not self._validate_project_file():
                 return False
                 
             # 2. 准备输出文件名
@@ -67,16 +67,79 @@ class WatchfaceCompiler:
             logging.error(f"Compilation error: {str(e)}", exc_info=True)
             return False
 
+    def _validate_project_file(self):
+        """验证项目文件"""
+        if not self.project_path.exists():
+            logging.error(f"Project file not found: {self.project_path}")
+            return False
+            
+        file_size = os.path.getsize(self.project_path)
+        if file_size == 0:
+            logging.error(f"Project file is empty: {self.project_path}")
+            return False
+            
+        logging.info(f"Project file size: {file_size} bytes")
+        return True
+
     def _generate_face_file(self, output_file):
         """直接解析.fprj文件并生成.face文件"""
         try:
-            # 读取.fprj文件
-            with open(self.project_path, 'r', encoding='utf-8') as f:
-                fprj_data = json.load(f)
+            # 读取文件二进制内容
+            with open(self.project_path, 'rb') as f:
+                raw_data = f.read()
+                
+            # 检测编码
+            detection = chardet.detect(raw_data)
+            encoding = detection['encoding'] or 'utf-8'
+            confidence = detection['confidence']
             
+            logging.info(f"Detected encoding: {encoding} (confidence: {confidence})")
+            
+            # 尝试解码内容
+            try:
+                content = raw_data.decode(encoding)
+            except UnicodeDecodeError as e:
+                logging.error(f"Failed to decode file: {str(e)}")
+                # 尝试其他常见编码
+                for alt_encoding in ['utf-8', 'latin-1', 'cp1252']:
+                    try:
+                        content = raw_data.decode(alt_encoding)
+                        logging.info(f"Successfully decoded with {alt_encoding}")
+                        break
+                    except:
+                        continue
+                else:
+                    logging.error("Failed to decode file with any encoding")
+                    return False
+            
+            # 记录前100个字符用于调试
+            sample = content[:100] if len(content) > 100 else content
+            logging.info(f"FPRJ file sample: {sample}")
+            
+            # 尝试解析JSON
+            try:
+                fprj_data = json.loads(content)
+            except json.JSONDecodeError as e:
+                # 输出更详细的错误信息
+                logging.error(f"JSON decode error: {str(e)}")
+                logging.error(f"Error at line {e.lineno}, column {e.colno}: {e.msg}")
+                
+                # 输出错误位置附近的文本
+                start = max(0, e.pos - 20)
+                end = min(len(content), e.pos + 20)
+                context = content[start:end]
+                logging.error(f"Error context: ...{context}...")
+                return False
+            except Exception as e:
+                logging.error(f"Unexpected error parsing JSON: {str(e)}")
+                return False
+        
             # 提取必要信息
             watchface_name = fprj_data.get('name', 'MyWatchFace')
             components = fprj_data.get('components', [])
+            
+            logging.info(f"Watchface name: {watchface_name}")
+            logging.info(f"Found {len(components)} components")
             
             # 创建.face文件结构
             with open(output_file, 'wb') as f:
@@ -93,9 +156,11 @@ class WatchfaceCompiler:
                 f.write(struct.pack('<I', len(components)))
                 
                 # 组件数据
-                for component in components:
+                for i, component in enumerate(components):
                     comp_type = component.get('type', '')
                     comp_data = component.get('data', {})
+                    
+                    logging.debug(f"Processing component {i+1}: {comp_type}")
                     
                     # 组件类型
                     type_bytes = comp_type.encode('utf-8')
@@ -103,16 +168,20 @@ class WatchfaceCompiler:
                     f.write(type_bytes)
                     
                     # 组件数据
-                    data_bytes = json.dumps(comp_data).encode('utf-8')
-                    compressed = zlib.compress(data_bytes)
-                    f.write(struct.pack('<I', len(compressed)))
-                    f.write(compressed)
+                    try:
+                        data_bytes = json.dumps(comp_data).encode('utf-8')
+                        compressed = zlib.compress(data_bytes)
+                        f.write(struct.pack('<I', len(compressed)))
+                        f.write(compressed)
+                    except Exception as e:
+                        logging.error(f"Error processing component {i+1}: {str(e)}")
+                        return False
             
             logging.info(f"Successfully generated watch face file: {output_file}")
             return True
             
         except Exception as e:
-            logging.error(f"Failed to generate face file: {str(e)}")
+            logging.error(f"Failed to generate face file: {str(e)}", exc_info=True)
             return False
 
     def _set_watchface_id(self, output_file):
