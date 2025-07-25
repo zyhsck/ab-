@@ -17,11 +17,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 安装ImageMagick
-      - name: Install ImageMagick
+      # 2. 安装或验证ImageMagick
+      - name: Install or verify ImageMagick
         run: |
-          choco install imagemagick -y
-          refreshenv
+          # 检查是否已安装
+          $imPath = "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+          if (-not (Test-Path $imPath)) {
+              choco install imagemagick -y
+          }
+          
+          # 验证安装
+          if (Test-Path $imPath) {
+              Write-Host "ImageMagick found at: $imPath"
+          } else {
+              Write-Error "ImageMagick not found"
+              exit 1
+          }
+          
+          # 手动添加到PATH
+          $env:Path += ";C:\Program Files\ImageMagick-7.1.2-Q16-HDRI"
+          echo "PATH=$env:Path" >> $env:GITHUB_ENV
 
       # 3. 解析JSON输入
       - name: Parse JSON input
@@ -58,8 +73,8 @@ jobs:
           $tempImage = "$env:TEMP\temp.png"
           [IO.File]::WriteAllBytes($tempImage, $bytes)
           
-          # 优化图片尺寸和质量
-          magick convert $tempImage -resize 320x320 -quality 80 "$imageDir\pic.png"
+          # 使用完整路径调用ImageMagick
+          & "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe" convert $tempImage -resize 320x320 -quality 80 "$imageDir\pic.png"
           
           # 验证图片
           if (-not (Test-Path "$imageDir\pic.png")) {
@@ -68,7 +83,7 @@ jobs:
           }
           
           # 输出图片信息
-          $imageInfo = magick identify "$imageDir\pic.png"
+          $imageInfo = & "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe" identify "$imageDir\pic.png"
           Write-Host "Optimized image info: $imageInfo"
 
       # 6. 创建必要的输出目录
