@@ -38,10 +38,9 @@ class WatchfaceCompiler:
                 return False
 
             # 2. 准备输出环境
-            output_info_dir = self.output_dir / "output"
-            output_info_dir.mkdir(parents=True, exist_ok=True)
+
             output_filename = self.project_path.stem + ".face"
-            output_file = output_info_dir / output_filename
+            output_file = self.output_dir / output_filename
 
             # 3. 执行编译
             if not self._run_compile_command(output_filename):
