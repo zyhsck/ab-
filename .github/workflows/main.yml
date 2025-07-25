@@ -9,15 +9,25 @@ on:
 jobs:
   process:
     runs-on: windows-latest
+    strategy:
+      max-parallel: 1  # 减少并行任务
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1  # .NET优化
     permissions:
       contents: write
       
     steps:
-      # 1. 检出代码
+      # 1. 安装ImageMagick
+      - name: Install ImageMagick
+        run: |
+          choco install imagemagick -y
+          refreshenv
+      
+      # 2. 检出代码
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 解析JSON输入并提取参数
+      # 3. 解析JSON输入并提取参数
       - name: Parse JSON input
         id: parse-json
         run: |
@@ -26,7 +36,7 @@ jobs:
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
           echo "project_dir=$(Split-Path -Path $($jsonInput.model) -Parent)" >> $env:GITHUB_OUTPUT
 
-      # 3. 复制整个项目目录到工作目录
+      # 4. 复制整个项目目录到工作目录
       - name: Copy entire project directory
         run: |
           # 创建项目目录
@@ -37,7 +47,7 @@ jobs:
           $sourceDir = "${{ steps.parse-json.outputs.project_dir }}"
           Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
           
-          # 重命名FPRJ文件（修复参数错误）
+          # 重命名FPRJ文件
           $fprjFile = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Leaf
           Rename-Item -Path "$projectDir\$fprjFile" -NewName "fprj.fprj" -Force
           
@@ -49,8 +59,8 @@ jobs:
           
           echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
 
-      # 4. 替换图片
-      - name: Replace image
+      # 5. 优化并替换图片
+      - name: Replace and optimize image
         run: |
           $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
           $imageDir = "$projectDir\images"
@@ -62,21 +72,29 @@ jobs:
           
           # 解码Base64图片
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
-          [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
+          $tempImage = "$env:TEMP\temp.png"
+          [IO.File]::WriteAllBytes($tempImage, $bytes)
+          
+          # 优化图片尺寸和质量
+          magick convert $tempImage -resize 320x320 -quality 80 "$imageDir\pic.png"
           
           # 验证图片
           if (-not (Test-Path "$imageDir\pic.png")) {
               Write-Error "Failed to save image"
               exit 1
           }
+          
+          # 输出图片信息
+          $imageInfo = magick identify "$imageDir\pic.png"
+          Write-Host "Optimized image info: $imageInfo"
 
-      # 5. 设置Python环境
+      # 6. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 6. 运行Python脚本
+      # 7. 运行Python脚本
       - name: Run Python script
         env:
           PYTHONIOENCODING: utf-8
@@ -94,7 +112,7 @@ jobs:
               Write-Host "Output file not found"
           }
 
-      # 7. 创建Release并上传
+      # 8. 创建Release并上传
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         if: success()
@@ -106,7 +124,7 @@ jobs:
           draft: false
           prerelease: false
 
-      # 8. 输出下载链接
+      # 9. 输出下载链接
       - name: Output Release URL
         run: |
           $outputFile = Get-ChildItem -Path "output" -Filter "*.face" | Select-Object -First 1
