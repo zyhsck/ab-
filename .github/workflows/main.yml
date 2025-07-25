@@ -10,7 +10,7 @@ jobs:
   process:
     runs-on: windows-latest
     permissions:
-      contents: write  # 必需权限
+      contents: write
       
     steps:
       # 1. 检出代码
@@ -24,87 +24,75 @@ jobs:
           $jsonInput = '${{ github.event.inputs.input_json }}' | ConvertFrom-Json
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
+          echo "project_dir=$(Split-Path -Path $($jsonInput.model) -Parent)" >> $env:GITHUB_OUTPUT
 
-      # 3. 复制并重命名FPRJ文件
-      - name: Prepare FPRJ file
+      # 3. 复制整个项目目录到工作目录
+      - name: Copy project directory
         run: |
-          # 获取当前工作目录
-          $pythonDir = Get-Location
+          # 创建项目目录
+          $projectDir = "project"
+          New-Item -ItemType Directory -Path $projectDir -Force
           
-          # 复制并重命名FPRJ文件
-          Copy-Item -Path "${{ steps.parse-json.outputs.fprj_path }}" -Destination "$pythonDir/fprj.fprj" -Force
+          # 复制整个项目目录
+          Copy-Item -Path "${{ steps.parse-json.outputs.project_dir }}\*" -Destination $projectDir -Recurse -Force
           
-          # 验证文件是否存在
-          if (-not (Test-Path "$pythonDir/fprj.fprj")) { 
-            Write-Error "Failed to copy FPRJ file"
-            exit 1
-          }
+          # 重命名FPRJ文件
+          $fprjFile = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Leaf
+          Rename-Item -Path "$projectDir\$fprjFile" -NewName "fprj.fprj"
+          
+          echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
 
-      # 4. 定位图片目录并替换图片
-      - name: Replace image in FPRJ
+      # 4. 替换图片
+      - name: Replace image
         run: |
-          # 提取FPRJ文件所在目录
-          $fprjDir = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Parent
-          $targetDir = "$fprjDir/images"
-          
-          # 确保图片目录存在
-          if (-not (Test-Path $targetDir)) { 
-            New-Item -ItemType Directory -Path $targetDir -Force
-          }
-          
-          # 解码Base64图片并保存
+          # 解码Base64图片
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
-          [IO.File]::WriteAllBytes("$targetDir/pic.png", $bytes)
           
-          # 验证图片是否保存成功
-          if (-not (Test-Path "$targetDir/pic.png")) { 
-            Write-Error "Failed to save image"
-            exit 1
+          # 保存到项目目录的images子目录
+          $imageDir = "${{ env.project_dir }}\images"
+          if (-not (Test-Path $imageDir)) {
+              New-Item -ItemType Directory -Path $imageDir -Force
+          }
+          
+          [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
+          
+          # 验证图片
+          if (-not (Test-Path "$imageDir\pic.png")) {
+              Write-Error "Failed to save image"
+              exit 1
           }
 
-      # 5. 运行Python脚本生成.face文件
+      # 5. 运行Python脚本
       - name: Run Python script
         run: |
-          # 调试：列出目录结构
-          Get-ChildItem -Recurse
+          # 调试：列出项目目录
+          Get-ChildItem -Path "${{ env.project_dir }}" -Recurse
           
-          # 调试：检查编译工具
-          if (Test-Path "compile.exe") {
-            Write-Host "Compiler tool exists"
-          } else {
-            Write-Host "Compiler tool not found"
-          }
-          
-          # 运行脚本
+          # 运行编译脚本
           python compile_watchface.py
           
           # 调试：检查输出文件
           if (Test-Path "output\*.face") {
-            Write-Host "Output file exists"
+              Write-Host "Output file exists"
           } else {
-            Write-Host "Output file not found"
+              Write-Host "Output file not found"
           }
 
-      # 6. 创建GitHub Release并上传.face文件
+      # 6. 创建Release并上传
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         if: success()
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}  # 使用自定义PAT
+          GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
           tag_name: "face-${{ github.run_id }}"
-          files: output/*.face  # 使用通配符匹配
+          files: output/*.face
           draft: false
           prerelease: false
 
-      # 7. 输出结果URL
+      # 7. 输出下载链接
       - name: Output Release URL
         run: |
           $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/$((Get-ChildItem output/*.face).Name)"
           echo "Download URL: $downloadUrl"
           echo "DOWNLOAD_URL=$downloadUrl" >> $env:GITHUB_ENV
-
-      # 8. 返回结果给用户
-      - name: Return result
-        run: |
-          echo "::set-output name=download_url::${{ env.DOWNLOAD_URL }}"
