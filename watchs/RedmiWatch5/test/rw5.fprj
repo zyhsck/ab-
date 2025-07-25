@@ -1,0 +1,7 @@
+<?xml version="1.0" ?>
+<FaceProject DeviceType="465" Id="">
+	<Screen Title="rw5" Bitmap="rw5.jpeg">
+		
+		<Widget Shape="30" Name="widget-1" Bitmap="rw5.jpeg" X="0" Y="0" Width="48" Height="48" Alpha="255" Visible_Src="0"/>
+	</Screen>
+</FaceProject>
