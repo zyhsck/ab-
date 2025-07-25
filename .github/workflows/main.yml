@@ -39,60 +39,22 @@ jobs:
           $imageDir = "$projectDir\images"
           New-Item -ItemType Directory -Path $imageDir -Force
           
-          echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
-
-      # 4. 替换图片（使用.NET方法）
-      - name: Replace image
-        run: |
-          $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
-          $imageDir = "$projectDir\images"
-          
-          # 确保图片目录存在
-          if (-not (Test-Path $imageDir)) {
-              New-Item -ItemType Directory -Path $imageDir -Force
-          }
-          
-          # 解码Base64图片
+          # 保存图片
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
-          $tempImage = "$env:TEMP\temp.png"
-          [IO.File]::WriteAllBytes($tempImage, $bytes)
-          
-          # 使用.NET方法压缩图片
-          Add-Type -AssemblyName System.Drawing
-          $image = [System.Drawing.Image]::FromFile($tempImage)
-          
-          # 创建缩略图
-          $thumb = $image.GetThumbnailImage(320, 320, $null, [IntPtr]::Zero)
-          $thumb.Save("$imageDir\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          
-          # 清理资源
-          $image.Dispose()
-          $thumb.Dispose()
-          
-          # 验证图片
-          if (-not (Test-Path "$imageDir\pic.png")) {
-              Write-Error "Failed to save image"
-              exit 1
-          }
+          [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
 
-      # 5. 创建必要的输出目录
-      - name: Create output directories
-        run: |
-          New-Item -ItemType Directory -Path "project\output" -Force
-          New-Item -ItemType Directory -Path "output" -Force
-
-      # 6. 设置Python环境
+      # 4. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 7. 运行Python脚本
+      # 5. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 8. 创建Release并获取下载链接
+      # 6. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
