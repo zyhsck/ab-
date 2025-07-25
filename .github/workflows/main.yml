@@ -55,23 +55,16 @@ jobs:
           if (-not (Test-Path "${{ env.target_dir }}/pic.png")) { exit 1 }
 
       # 6. 运行Python脚本生成.face文件
+      
       - name: Run Python script
         run: |
           python compile_watchface.py
+          ls -R output  # 调试输出目录结构
 
-      # 7. 创建GitHub Release并上传.face文件
-      - name: Create Release and Upload Asset
+      - name: Create Release
         uses: softprops/action-gh-release@v2
-        if: success()
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
           tag_name: "face-${{ github.run_id }}"
-          files: fprj.face
-          draft: false
-          prerelease: false
-
-      # 8. 输出结果URL（可选）
-      - name: Output Release URL
-        run: |
-          echo "Download URL: https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/fprj.face"
+          files: output/fprj.face
