@@ -65,10 +65,25 @@ jobs:
       # 5. 运行Python脚本生成.face文件
       - name: Run Python script
         run: |
+          # 调试：列出目录结构
+          Get-ChildItem -Recurse
+          
+          # 调试：检查编译工具
+          if (Test-Path "compile.exe") {
+            Write-Host "Compiler tool exists"
+          } else {
+            Write-Host "Compiler tool not found"
+          }
+          
+          # 运行脚本
           python compile_watchface.py
           
-          # 调试：列出生成的文件
-          Get-ChildItem -Recurse
+          # 调试：检查输出文件
+          if (Test-Path "output\*.face") {
+            Write-Host "Output file exists"
+          } else {
+            Write-Host "Output file not found"
+          }
 
       # 6. 创建GitHub Release并上传.face文件
       - name: Create Release and Upload Asset
