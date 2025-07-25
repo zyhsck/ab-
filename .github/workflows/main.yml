@@ -1,4 +1,4 @@
-name: Process FPRJ and Base64 Image
+name: Process Watch Face
 on:
   workflow_dispatch:
     inputs:
@@ -10,7 +10,7 @@ jobs:
   process:
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: write  # 必需权限
       
     steps:
       # 1. 检出代码
@@ -26,34 +26,32 @@ jobs:
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
           echo "project_dir=$(Split-Path -Path $($jsonInput.model) -Parent)" >> $env:GITHUB_OUTPUT
 
-      # 3. 复制整个项目目录到工作目录
-      - name: Copy project directory
+      # 3. 准备FPRJ文件
+      - name: Prepare FPRJ file
         run: |
-          # 创建项目目录
-          $projectDir = "project"
-          New-Item -ItemType Directory -Path $projectDir -Force
+          # 复制FPRJ文件到根目录并重命名
+          Copy-Item -Path "${{ steps.parse-json.outputs.fprj_path }}" -Destination "fprj.fprj" -Force
           
-          # 复制整个项目目录
-          Copy-Item -Path "${{ steps.parse-json.outputs.project_dir }}\*" -Destination $projectDir -Recurse -Force
-          
-          # 重命名FPRJ文件
-          $fprjFile = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Leaf
-          Rename-Item -Path "$projectDir\$fprjFile" -NewName "fprj.fprj"
-          
-          echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
+          # 验证文件是否存在
+          if (-not (Test-Path "fprj.fprj")) { 
+            Write-Error "Failed to copy FPRJ file"
+            exit 1
+          }
 
       # 4. 替换图片
       - name: Replace image
         run: |
-          # 解码Base64图片
-          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
+          # 提取项目目录
+          $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
+          $imageDir = "$projectDir\images"
           
-          # 保存到项目目录的images子目录
-          $imageDir = "${{ env.project_dir }}\images"
+          # 确保图片目录存在
           if (-not (Test-Path $imageDir)) {
               New-Item -ItemType Directory -Path $imageDir -Force
           }
           
+          # 解码Base64图片
+          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
           [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
           
           # 验证图片
@@ -62,11 +60,19 @@ jobs:
               exit 1
           }
 
-      # 5. 运行Python脚本
+      # 5. 设置Python环境
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # 6. 运行Python脚本
       - name: Run Python script
+        env:
+          PYTHONIOENCODING: utf-8  # 强制UTF-8编码
         run: |
-          # 调试：列出项目目录
-          Get-ChildItem -Path "${{ env.project_dir }}" -Recurse
+          # 调试：列出目录结构
+          Get-ChildItem -Recurse
           
           # 运行编译脚本
           python compile_watchface.py
@@ -78,21 +84,27 @@ jobs:
               Write-Host "Output file not found"
           }
 
-      # 6. 创建Release并上传
+      # 7. 创建Release并上传
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         if: success()
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.PAT }}  # 使用自定义PAT
         with:
           tag_name: "face-${{ github.run_id }}"
           files: output/*.face
           draft: false
           prerelease: false
 
-      # 7. 输出下载链接
+      # 8. 输出下载链接
       - name: Output Release URL
         run: |
-          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/$((Get-ChildItem output/*.face).Name)"
+          $outputFile = Get-ChildItem -Path "output" -Filter "*.face" | Select-Object -First 1
+          if ($null -eq $outputFile) {
+              Write-Error "No output file found"
+              exit 1
+          }
+          
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/$($outputFile.Name)"
           echo "Download URL: $downloadUrl"
           echo "DOWNLOAD_URL=$downloadUrl" >> $env:GITHUB_ENV
