@@ -64,7 +64,7 @@ class WatchfaceCompiler:
             return False
             
         # 编译工具路径 - 修改为相对路径
-        compile_tool = pathlib.Path(__file__).parent/ "compile.exe"
+        compile_tool = "compile.exe"
         if not compile_tool.exists():
             logging.error(f"编译工具未找到: {compile_tool}")
             return False
@@ -74,7 +74,7 @@ class WatchfaceCompiler:
     def _run_compile_command(self, output_filename):
         """执行编译命令"""
         # 编译工具路径
-        compile_tool = pathlib.Path(__file__).parent / "compiler" / "compile.exe"
+        compile_tool = "compile.exe"
         
         # 准备命令参数
         cmd = [
@@ -142,8 +142,8 @@ if __name__ == "__main__":
         )
         
         if compiler.compile():
-            print("✅ 编译成功")
+            print(" 编译成功")
         else:
-            print("❌ 编译失败")
+            print(" 编译失败")
     except Exception as e:
-        print(f"❌ 程序异常: {str(e)}")
+        print(f" 程序异常: {str(e)}")
