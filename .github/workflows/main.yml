@@ -17,14 +17,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 增加虚拟内存
+      # 2. 增加虚拟内存到16GB
       - name: Increase virtual memory
         run: |
           wmic computersystem set AutomaticManagedPagefile=False
           wmic pagefileset create name="C:\pagefile.sys"
-          wmic pagefileset where name="C:\pagefile.sys" set InitialSize=4096,MaximumSize=8192
+          wmic pagefileset where name="C:\pagefile.sys" set InitialSize=16384,MaximumSize=16384
           wmic pagefileset list brief
-          echo "Virtual memory increased to 4096-8192 MB"
+          echo "Virtual memory increased to 16GB"
 
       # 3. 解析JSON输入
       - name: Parse JSON input
@@ -61,34 +61,44 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 6. 运行Python脚本
+      # 6. 安装Python依赖
+      - name: Install Python dependencies
+        run: |
+          pip install psutil
+
+      # 7. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 7. 验证输出文件
+      # 8. 验证输出文件
       - name: Verify output file
         run: |
           $file = Get-ChildItem -Path "output" -Filter "*.face"
           if ($file) {
               $size = $file.Length
               Write-Host "Output file size: $size bytes"
-              
-              # 使用.NET方法读取文件头部
-              $stream = [System.IO.File]::OpenRead($file.FullName)
-              $buffer = New-Object byte[] 100
-              $bytesRead = $stream.Read($buffer, 0, 100)
-              $stream.Close()
-              
-              # 转换为十六进制字符串
-              $hexString = [BitConverter]::ToString($buffer, 0, $bytesRead)
-              Write-Host "File header (hex): $hexString"
+              if ($size -lt 1MB) {
+                  # 输出工作目录内容用于调试
+                  Write-Host "Contents of work directory:"
+                  Get-ChildItem -Path "work" -Recurse
+                  
+                  # 输出编译工具日志
+                  $logFile = Get-ChildItem -Path "work" -Filter "*.log" -Recurse
+                  if ($logFile) {
+                      Write-Host "Compiler log:"
+                      Get-Content -Path $logFile.FullName
+                  }
+                  
+                  Write-Error "Output file is too small"
+                  exit 1
+              }
           } else {
               Write-Error "No output file found"
               exit 1
           }
 
-      # 8. 创建Release并获取下载链接
+      # 9. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
