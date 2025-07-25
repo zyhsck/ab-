@@ -17,7 +17,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 解析JSON输入
+      # 2. 增加系统虚拟内存
+      - name: Increase virtual memory
+        run: |
+          # 设置页面文件
+          $pageFilePath = "C:\pagefile.sys"
+          $initialSize = 4096
+          $maximumSize = 8192
+          
+          # 设置虚拟内存
+          $computer = Get-WmiObject Win32_ComputerSystem -EnableAllPrivileges
+          $computer.AutomaticManagedPagefile = $false
+          $computer.Put()
+          
+          $pageFile = Get-WmiObject -Query "SELECT * FROM Win32_PageFileSetting WHERE Name='$pageFilePath'"
+          if ($null -eq $pageFile) {
+              $pageFile = ([wmiclass]"Win32_PageFileSetting").CreateInstance()
+              $pageFile.Name = $pageFilePath
+          }
+          $pageFile.InitialSize = $initialSize
+          $pageFile.MaximumSize = $maximumSize
+          $pageFile.Put()
+
+      # 3. 解析JSON输入
       - name: Parse JSON input
         id: parse-json
         run: |
@@ -25,7 +47,7 @@ jobs:
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
 
-      # 3. 准备项目文件
+      # 4. 准备项目文件
       - name: Prepare project
         run: |
           # 创建项目目录
@@ -43,39 +65,23 @@ jobs:
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
           [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
 
-      # 4. 设置Python环境
+      # 5. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 5. 运行Python脚本
+      # 6. 安装Python依赖
+      - name: Install Python dependencies
+        run: |
+          pip install psutil
+
+      # 7. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 6. 检查输出文件
-      - name: Check output file
-        run: |
-          $file = Get-ChildItem -Path "output" -Filter "*.face"
-          if ($file) {
-              $size = $file.Length
-              Write-Host "Output file size: $size bytes"
-              
-              # 使用.NET方法读取文件头部
-              $stream = [System.IO.File]::OpenRead($file.FullName)
-              $buffer = New-Object byte[] 100
-              $bytesRead = $stream.Read($buffer, 0, 100)
-              $stream.Close()
-              
-              # 转换为十六进制字符串
-              $hexString = [BitConverter]::ToString($buffer, 0, $bytesRead)
-              Write-Host "File header (hex): $hexString"
-          } else {
-              Write-Error "No output file found"
-          }
-
-      # 7. 创建Release并获取下载链接
+      # 8. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
