@@ -1,11 +1,12 @@
 import os
 import logging
+import pathlib
 from binary import WatchfaceBinary
 
 class WatchfaceCompiler:
     def __init__(self, project_path, output_dir):
-        self.project_path = project_path
-        self.output_dir = output_dir
+        self.project_path = str(pathlib.Path(project_path).resolve())
+        self.output_dir = str(pathlib.Path(output_dir).resolve())
 
     def compile(self):
         """
@@ -18,46 +19,36 @@ class WatchfaceCompiler:
                 logging.error(f"项目文件 {self.project_path} 不存在！")
                 return False
 
-            # 2. 调用编译工具（示例路径，需根据实际项目调整）
-            compile_tool = os.path.join("compile.exe")  # 修正为正确的相对路径
+            # 2. 调用编译工具（使用绝对路径更安全）
+            compile_tool = str(pathlib.Path("compile.exe").resolve())
             if not os.path.exists(compile_tool):
-                logging.error("编译工具未找到！")
+                logging.error(f"编译工具未找到：{compile_tool}")
                 return False
 
             # 3. 确保输出目录存在
-            output_info_dir = os.path.join(self.output_dir, "output")
-            os.makedirs(output_info_dir, exist_ok=True)
+            output_info_dir = pathlib.Path(self.output_dir) / "output"
+            output_info_dir.mkdir(parents=True, exist_ok=True)
 
-            # 4. 执行编译命令
-            output_filename = os.path.splitext(os.path.basename(self.project_path))[0] + ".face"
-            output_file = os.path.join(self.output_dir, "output", output_filename)
-            cmd = f"{compile_tool} -b {self.project_path.replace('/', '\\')} output {output_filename} 1461256429"
-            os.system(cmd)
+            # 4. 执行编译命令（安全处理路径）
+            output_filename = pathlib.Path(self.project_path).stem + ".face"
+            output_file = output_info_dir / output_filename
+            
+            cmd = f'"{compile_tool}" -b "{self.project_path}" output "{output_filename}" 1461256429'
+            if os.system(cmd) != 0:
+                raise RuntimeError("编译命令执行失败")
 
-            # 4. 验证输出文件
-            if not os.path.exists(output_file):
+            # 5. 验证输出文件
+            if not output_file.exists():
                 logging.error("编译失败，未生成输出文件！")
                 return False
 
-            # 5. 可选：设置表盘 ID（如果设备支持）
-            binary = WatchfaceBinary(output_file)
-            binary.setId("123456789")  # 替换为实际表盘 ID
+            # 6. 设置表盘 ID
+            binary = WatchfaceBinary(str(output_file))
+            binary.setId("122456789")
 
             logging.info(f"表盘文件已生成：{output_file}")
             return True
 
         except Exception as e:
-            logging.error(f"编译过程中发生错误：{e}")
+            logging.error(f"编译错误：{str(e)}", exc_info=True)
             return False
-
-
-if __name__ == "__main__":
-    # 示例用法
-    compiler = WatchfaceCompiler(
-        project_path="src/rw5/rw5.fprj",  # 替换为实际项目文件路径
-        output_dir="output"  # 替换为输出目录
-    )
-    if compiler.compile():
-        print("编译成功！")
-    else:
-        print("编译失败！")
