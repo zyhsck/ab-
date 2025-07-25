@@ -3,12 +3,15 @@ on:
   workflow_dispatch:
     inputs:
       input_json:
-        description: 'JSON containing model path and image Base64 (e.g., {"model":"watchs/MiBand9pro/xxx.fprj","file":"base64string"})'
+        description: 'JSON containing model path and image Base64 (e.g., {"model":"watchs/RedmiWatch5/test/rw5.fprj","file":"base64string"})'
         required: true
 
 jobs:
   process:
     runs-on: windows-latest
+    permissions:
+      contents: write  # 必需权限
+      
     steps:
       # 1. 检出代码
       - name: Checkout repository
@@ -22,10 +25,10 @@ jobs:
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
 
-      # 3. 复制并重命名FPRJ文件到Python脚本目录
+      # 3. 复制并重命名FPRJ文件
       - name: Prepare FPRJ file
         run: |
-          # 获取Python脚本所在目录
+          # 获取当前工作目录
           $pythonDir = Get-Location
           
           # 复制并重命名FPRJ文件
@@ -37,34 +40,56 @@ jobs:
             exit 1
           }
 
-      # 4. 定位.fprj文件所在目录的images子文件夹
-      - name: Locate target image directory
+      # 4. 定位图片目录并替换图片
+      - name: Replace image in FPRJ
         run: |
+          # 提取FPRJ文件所在目录
           $fprjDir = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Parent
           $targetDir = "$fprjDir/images"
+          
+          # 确保图片目录存在
           if (-not (Test-Path $targetDir)) { 
             New-Item -ItemType Directory -Path $targetDir -Force
           }
-          echo "target_dir=$targetDir" >> $env:GITHUB_OUTPUT
-
-      # 5. 解码Base64图片并替换目标文件
-      - name: Replace image in FPRJ
-        run: |
+          
+          # 解码Base64图片并保存
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
-          [IO.File]::WriteAllBytes("${{ env.target_dir }}/pic.png", $bytes)
-          if (-not (Test-Path "${{ env.target_dir }}/pic.png")) { exit 1 }
+          [IO.File]::WriteAllBytes("$targetDir/pic.png", $bytes)
+          
+          # 验证图片是否保存成功
+          if (-not (Test-Path "$targetDir/pic.png")) { 
+            Write-Error "Failed to save image"
+            exit 1
+          }
 
-      # 6. 运行Python脚本生成.face文件
-      
+      # 5. 运行Python脚本生成.face文件
       - name: Run Python script
         run: |
           python compile_watchface.py
-          ls -R output  # 调试输出目录结构
+          
+          # 调试：列出生成的文件
+          Get-ChildItem -Recurse
 
-      - name: Create Release
+      # 6. 创建GitHub Release并上传.face文件
+      - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
+        if: success()
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.PAT }}  # 使用自定义PAT
         with:
           tag_name: "face-${{ github.run_id }}"
-          files: output/fprj.face
+          files: output/*.face  # 使用通配符匹配
+          draft: false
+          prerelease: false
+
+      # 7. 输出结果URL
+      - name: Output Release URL
+        run: |
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/$((Get-ChildItem output/*.face).Name)"
+          echo "Download URL: $downloadUrl"
+          echo "DOWNLOAD_URL=$downloadUrl" >> $env:GITHUB_ENV
+
+      # 8. 返回结果给用户
+      - name: Return result
+        run: |
+          echo "::set-output name=download_url::${{ env.DOWNLOAD_URL }}"
