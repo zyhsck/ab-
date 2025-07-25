@@ -42,7 +42,7 @@ jobs:
       # 5. 运行Python脚本生成.face文件
       - name: Run Python script
         run: |
-          python index.py
+          python compile_watchface.py
 
       # 6. 创建GitHub Release并上传.face文件
       - name: Create Release and Upload Asset
