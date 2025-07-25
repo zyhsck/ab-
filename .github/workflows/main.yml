@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       input_json:
-        description: 'JSON containing model path and image Base64'
+        description: 'JSON containing model path and image Base64 (e.g., {"model":"watchs/RedmiWatch5/test/rw5.fprj","file":"base64string"})'
         required: true
 
 jobs:
@@ -24,38 +24,39 @@ jobs:
           $jsonInput = '${{ github.event.inputs.input_json }}' | ConvertFrom-Json
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
-          echo "project_dir=$(Split-Path -Path $($jsonInput.model) -Parent)" >> $env:GITHUB_OUTPUT
 
-      # 3. 准备项目目录
-      - name: Prepare project directory
+      # 3. 准备项目文件
+      - name: Prepare project
         run: |
+          # 创建项目目录
           $projectDir = "project"
           New-Item -ItemType Directory -Path $projectDir -Force
-          $sourceDir = "${{ steps.parse-json.outputs.project_dir }}"
-          Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
-          $fprjFile = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Leaf
-          Rename-Item -Path "$projectDir\$fprjFile" -NewName "fprj.fprj" -Force
-          echo "project_dir=$projectDir" >> $env:GITHUB_OUTPUT
-
-      # 4. 替换图片
-      - name: Replace image
-        run: |
-          $projectDir = "${{ steps.parse-json.outputs.project_dir }}"
+          
+          # 复制并重命名FPRJ文件
+          Copy-Item -Path "${{ steps.parse-json.outputs.fprj_path }}" -Destination "$projectDir\fprj.fprj" -Force
+          
+          # 创建图片目录
           $imageDir = "$projectDir\images"
-          New-Item -ItemType Directory -Path $imageDir -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $imageDir -Force
+          
+          # 保存图片
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
           [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
 
-      # 5. 运行编译脚本
-      - name: Run Python script
+      # 4. 设置Python环境
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+
+      # 5. 运行Python脚本
+      - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 6. 创建Release并上传.face文件
-      - name: Create Release and Upload Asset
+      # 6. 创建Release并获取下载链接
+      - name: Create Release and Get URL
+        id: create-release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
@@ -64,14 +65,6 @@ jobs:
           files: output/*.face
           draft: false
           prerelease: false
-
-      # 7. 输出下载链接
-      - name: Output Release URL
-        run: |
-          $outputFile = Get-ChildItem -Path "output" -Filter "*.face" | Select-Object -First 1
-          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/$($outputFile.Name)"
-          echo "::set-output name=download_url::$downloadUrl"
-        id: set-url
       
     outputs:
-      download_url: ${{ steps.set-url.outputs.download_url }}
+      download_url: ${{ steps.create-release.outputs.url }}
