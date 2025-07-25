@@ -2,7 +2,7 @@ import os
 import logging
 import pathlib
 import subprocess
-from utils.binary import WatchfaceBinary
+from binary import WatchfaceBinary
 
 # 配置日志系统
 logging.basicConfig(
