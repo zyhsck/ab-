@@ -151,8 +151,8 @@ if __name__ == "__main__":
     try:
         # 使用固定路径
         compiler = WatchfaceCompiler(
-            project_path="fprj.fprj",  # 固定文件名
-            output_dir="output"         # 输出目录
+            project_path="project/fprj.fprj",  # 修改为项目目录下的文件
+            output_dir="output"
         )
         
         if compiler.compile():
