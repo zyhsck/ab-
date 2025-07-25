@@ -1,0 +1,62 @@
+name: Process FPRJ and Base64 Image
+on:
+  workflow_dispatch:
+    inputs:
+      input_json:
+        description: 'JSON containing model path and image Base64 (e.g., {"model":"watchs/MiBand9pro/xxx.fprj","file":"base64string"})'
+        required: true
+
+jobs:
+  process:
+    runs-on: windows-latest
+    steps:
+      # 1. 检出代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 解析JSON输入并提取参数
+      - name: Parse JSON input
+        id: parse-json
+        run: |
+          $jsonInput = '${{ github.event.inputs.input_json }}' | ConvertFrom-Json
+          echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
+          echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
+
+      # 3. 定位.fprj文件所在目录的images子文件夹
+      - name: Locate target image directory
+        run: |
+          $fprjDir = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Parent
+          $targetDir = "$fprjDir/images"
+          if (-not (Test-Path $targetDir)) { 
+            New-Item -ItemType Directory -Path $targetDir -Force
+          }
+          echo "target_dir=$targetDir" >> $env:GITHUB_OUTPUT
+
+      # 4. 解码Base64图片并替换目标文件
+      - name: Replace image in FPRJ
+        run: |
+          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
+          [IO.File]::WriteAllBytes("${{ env.target_dir }}/pic.png", $bytes)
+          if (-not (Test-Path "${{ env.target_dir }}/pic.png")) { exit 1 }
+
+      # 5. 运行Python脚本生成.face文件
+      - name: Run Python script
+        run: |
+          python index.py
+
+      # 6. 创建GitHub Release并上传.face文件
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: "face-${{ github.run_id }}"
+          files: fprj.face
+          draft: false
+          prerelease: false
+
+      # 7. 输出结果URL（可选）
+      - name: Output Release URL
+        run: |
+          echo "Download URL: https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/fprj.face"
