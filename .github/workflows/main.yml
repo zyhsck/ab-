@@ -22,7 +22,22 @@ jobs:
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
 
-      # 3. 定位.fprj文件所在目录的images子文件夹
+      # 3. 复制并重命名FPRJ文件到Python脚本目录
+      - name: Prepare FPRJ file
+        run: |
+          # 获取Python脚本所在目录
+          $pythonDir = Get-Location
+          
+          # 复制并重命名FPRJ文件
+          Copy-Item -Path "${{ steps.parse-json.outputs.fprj_path }}" -Destination "$pythonDir/fprj.fprj" -Force
+          
+          # 验证文件是否存在
+          if (-not (Test-Path "$pythonDir/fprj.fprj")) { 
+            Write-Error "Failed to copy FPRJ file"
+            exit 1
+          }
+
+      # 4. 定位.fprj文件所在目录的images子文件夹
       - name: Locate target image directory
         run: |
           $fprjDir = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Parent
@@ -32,19 +47,19 @@ jobs:
           }
           echo "target_dir=$targetDir" >> $env:GITHUB_OUTPUT
 
-      # 4. 解码Base64图片并替换目标文件
+      # 5. 解码Base64图片并替换目标文件
       - name: Replace image in FPRJ
         run: |
           $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
           [IO.File]::WriteAllBytes("${{ env.target_dir }}/pic.png", $bytes)
           if (-not (Test-Path "${{ env.target_dir }}/pic.png")) { exit 1 }
 
-      # 5. 运行Python脚本生成.face文件
+      # 6. 运行Python脚本生成.face文件
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 6. 创建GitHub Release并上传.face文件
+      # 7. 创建GitHub Release并上传.face文件
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         if: success()
@@ -56,7 +71,7 @@ jobs:
           draft: false
           prerelease: false
 
-      # 7. 输出结果URL（可选）
+      # 8. 输出结果URL（可选）
       - name: Output Release URL
         run: |
           echo "Download URL: https://github.com/${{ github.repository }}/releases/download/face-${{ github.run_id }}/fprj.face"
