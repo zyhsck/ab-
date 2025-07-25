@@ -78,7 +78,7 @@ class WatchfaceCompiler:
             logging.error(f"Project file is empty: {self.project_path}")
             return False
             
-        logging.info(f"Project file size: {file_size} bytes")
+        logging.info(f"Project file size: $file_size bytes")
         return True
 
     def _generate_face_file(self, output_file):
@@ -116,6 +116,10 @@ class WatchfaceCompiler:
                 # 提取子元素
                 for child in component:
                     comp_data[child.tag] = child.text
+                
+                # 确保组件数据不为空
+                if not comp_data:
+                    logging.warning(f"Component {comp_type} has no data")
                 
                 components.append({
                     'type': comp_type,
@@ -161,7 +165,10 @@ class WatchfaceCompiler:
                         logging.error(f"Error processing component {i+1}: {str(e)}")
                         return False
             
-            logging.info(f"Successfully generated watch face file: {output_file}")
+            # 记录文件大小
+            file_size = os.path.getsize(output_file)
+            logging.info(f"Generated file size: {file_size} bytes")
+            
             return True
             
         except Exception as e:
@@ -171,6 +178,13 @@ class WatchfaceCompiler:
     def _set_watchface_id(self, output_file):
         """设置表盘ID"""
         try:
+            # 检查文件大小
+            file_size = os.path.getsize(output_file)
+            if file_size < 9:
+                logging.error(f"File too small to set ID: {file_size} bytes")
+                return False
+                
+            # 设置ID
             binary = WatchfaceBinary(str(output_file))
             binary.setId("123456789")
             logging.info(f"Set watch face ID: 123456789")
