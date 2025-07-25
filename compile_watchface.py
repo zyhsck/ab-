@@ -103,6 +103,11 @@ class WatchfaceCompiler:
             
             logging.info(f"Executing command: {' '.join(cmd)}")
             
+            # 创建编译工具需要的输出目录
+            output_dir = self.project_path.parent / "output"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Created output directory: {output_dir}")
+            
             # 设置环境变量优化内存
             env = os.environ.copy()
             env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
