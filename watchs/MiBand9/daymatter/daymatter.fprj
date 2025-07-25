@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="utf-16" ?>
-<FaceProject DeviceType="366">
+<?xml version="1.0" ?>
+<FaceProject DeviceType="366" id = 0>
     <Screen Title="倒数日" Bitmap="images/preview.png">
         <Widget Shape="34" Name="app__lua%2Fdaymatter%2Fdaymatter.lua" X="0" Y="0" Width="192" Height="490" Alpha="0" Visible_Src="0" />
     </Screen>
