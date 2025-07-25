@@ -7,6 +7,7 @@ import shutil
 import json
 import struct
 import zlib
+import xml.etree.ElementTree as ET
 from binary import WatchfaceBinary
 
 # 强制UTF-8编码
@@ -23,7 +24,7 @@ logging.basicConfig(
 class WatchfaceCompiler:
     def __init__(self, project_path, output_dir):
         """
-        终极解决方案：直接解析.fprj文件并生成.face文件
+        终极解决方案：支持XML格式的.fprj文件
         :param project_path: 项目文件路径(.fprj)
         :param output_dir: 输出目录路径
         """
@@ -43,7 +44,7 @@ class WatchfaceCompiler:
 
     def compile(self):
         """
-        编译主流程 - 直接处理.fprj文件
+        编译主流程 - 支持XML格式
         :return: 成功返回True，失败返回False
         """
         try:
@@ -55,7 +56,7 @@ class WatchfaceCompiler:
             output_filename = self.project_path.stem + ".face"
             output_file = self.output_dir / output_filename
             
-            # 3. 直接解析.fprj文件并生成.face文件
+            # 3. 解析.fprj文件并生成.face文件
             if not self._generate_face_file(output_file):
                 return False
                 
@@ -80,71 +81,46 @@ class WatchfaceCompiler:
         logging.info(f"Project file size: {file_size} bytes")
         return True
 
-    def _detect_encoding(self, raw_data):
-        """尝试检测文件编码"""
-        # 尝试UTF-8
-        try:
-            content = raw_data.decode('utf-8')
-            return 'utf-8', content
-        except UnicodeDecodeError:
-            pass
-        
-        # 尝试UTF-16
-        try:
-            content = raw_data.decode('utf-16')
-            return 'utf-16', content
-        except UnicodeDecodeError:
-            pass
-        
-        # 尝试常见编码
-        encodings = ['latin-1', 'cp1252', 'gbk', 'iso-8859-1']
-        for encoding in encodings:
-            try:
-                content = raw_data.decode(encoding)
-                return encoding, content
-            except UnicodeDecodeError:
-                continue
-        
-        # 最后尝试UTF-8并忽略错误
-        content = raw_data.decode('utf-8', errors='ignore')
-        return 'unknown', content
-
     def _generate_face_file(self, output_file):
-        """直接解析.fprj文件并生成.face文件"""
+        """解析XML格式的.fprj文件并生成.face文件"""
         try:
-            # 读取文件二进制内容
-            with open(self.project_path, 'rb') as f:
-                raw_data = f.read()
+            # 读取文件内容
+            with open(self.project_path, 'r', encoding='utf-8') as f:
+                content = f.read()
                 
-            # 尝试检测编码
-            encoding, content = self._detect_encoding(raw_data)
-            logging.info(f"Using encoding: {encoding}")
-            
             # 记录前100个字符用于调试
             sample = content[:100] if len(content) > 100 else content
             logging.info(f"FPRJ file sample: {sample}")
             
-            # 尝试解析JSON
+            # 尝试解析XML
             try:
-                fprj_data = json.loads(content)
-            except json.JSONDecodeError as e:
-                # 输出更详细的错误信息
-                logging.error(f"JSON decode error: {str(e)}")
-                logging.error(f"Error at line {e.lineno}, column {e.colno}: {e.msg}")
-                
-                # 输出错误位置附近的文本
-                start = max(0, e.pos - 20)
-                end = min(len(content), e.pos + 20)
-                context = content[start:end]
-                logging.error(f"Error context: ...{context}...")
+                root = ET.fromstring(content)
+            except ET.ParseError as e:
+                logging.error(f"XML parse error: {str(e)}")
                 return False
-            except Exception as e:
-                logging.error(f"Unexpected error parsing JSON: {str(e)}")
-                return False
-        
+            
             # 提取必要信息
-            watchface_name = fprj_data.get('name', 'MyWatchFace')
-            components = fprj_data.get('components', [])
+            watchface_name = root.attrib.get('name', 'MyWatchFace')
+            components = []
+            
+            # 提取组件信息
+            for component in root.findall('.//Component'):
+                comp_type = component.attrib.get('type', '')
+                comp_data = {}
+                
+                # 提取属性
+                for key, value in component.attrib.items():
+                    if key != 'type':
+                        comp_data[key] = value
+                
+                # 提取子元素
+                for child in component:
+                    comp_data[child.tag] = child.text
+                
+                components.append({
+                    'type': comp_type,
+                    'data': comp_data
+                })
             
             logging.info(f"Watchface name: {watchface_name}")
             logging.info(f"Found {len(components)} components")
@@ -165,8 +141,8 @@ class WatchfaceCompiler:
                 
                 # 组件数据
                 for i, component in enumerate(components):
-                    comp_type = component.get('type', '')
-                    comp_data = component.get('data', {})
+                    comp_type = component['type']
+                    comp_data = component['data']
                     
                     logging.debug(f"Processing component {i+1}: {comp_type}")
                     
