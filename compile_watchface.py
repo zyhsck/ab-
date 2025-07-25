@@ -4,6 +4,7 @@ import io
 import logging
 import pathlib
 import shutil
+import subprocess  # 确保导入subprocess
 import json
 import struct
 import zlib
@@ -57,15 +58,17 @@ class WatchfaceCompiler:
             output_file = self.output_dir / output_filename
             
             # 3. 直接复制项目结构
-            self._copy_project_structure()
-            
+            if not self._copy_project_structure():
+                return False
+                
             # 4. 运行原始编译工具
             if not self._run_original_compiler(output_filename):
                 return False
                 
             # 5. 移动输出文件
-            self._move_output_file(output_file)
-            
+            if not self._move_output_file(output_file):
+                return False
+                
             # 6. 设置表盘ID
             return self._set_watchface_id(output_file)
             
@@ -92,14 +95,19 @@ class WatchfaceCompiler:
         try:
             # 创建临时工作目录
             self.work_dir = pathlib.Path("work")
+            if self.work_dir.exists():
+                shutil.rmtree(self.work_dir)
             self.work_dir.mkdir(parents=True, exist_ok=True)
             
             # 复制整个项目目录
-            shutil.copytree(
-                self.project_path.parent,
-                self.work_dir,
-                dirs_exist_ok=True
-            )
+            project_parent = self.project_path.parent
+            for item in os.listdir(project_parent):
+                s = project_parent / item
+                d = self.work_dir / item
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(s, d)
             
             logging.info(f"Copied project to work directory: {self.work_dir}")
             return True
@@ -159,8 +167,19 @@ class WatchfaceCompiler:
             if result.stderr:
                 logging.warning(f"Compiler warnings:\n{result.stderr}")
                 
-            return True
-            
+            # 检查输出文件是否生成
+            work_output_file = self.work_dir / "output" / output_filename
+            if work_output_file.exists():
+                logging.info(f"Output file generated: {work_output_file}")
+                return True
+            else:
+                logging.error(f"Output file not generated: {work_output_file}")
+                # 列出工作目录内容
+                logging.error("Contents of work directory:")
+                for p in self.work_dir.glob('**/*'):
+                    logging.error(f"  {p}")
+                return False
+                
         except subprocess.CalledProcessError as e:
             logging.error(f"Compilation failed (exit code {e.returncode}):\n{e.stderr}")
             return False
@@ -175,7 +194,14 @@ class WatchfaceCompiler:
         
         if not work_output_file.exists():
             logging.error(f"Output file not generated: {work_output_file}")
-            return False
+            # 检查可能的其他位置
+            alt_path = self.work_dir / output_file.name
+            if alt_path.exists():
+                logging.info(f"Found output file in alternative location: {alt_path}")
+                shutil.move(str(alt_path), str(output_file))
+                return True
+            else:
+                return False
             
         try:
             # 移动文件到输出目录
