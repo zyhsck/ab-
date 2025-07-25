@@ -64,7 +64,7 @@ class WatchfaceCompiler:
             return False
             
         # 编译工具路径 - 修改为相对路径
-        compile_tool = pathlib.Path(__file__).parent / "compiler" / "compile.exe"
+        compile_tool = pathlib.Path(__file__).parent/ "compile.exe"
         if not compile_tool.exists():
             logging.error(f"编译工具未找到: {compile_tool}")
             return False
