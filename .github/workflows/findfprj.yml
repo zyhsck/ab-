@@ -1,27 +1,28 @@
 name: Find FPRJ Files
 on:
-  workflow_dispatch:
-  repository_dispatch:
+  workflow_dispatch: # 允许手动触发
+  repository_dispatch: # 允许通过API触发
     types: [find-fprj-request]
 
 jobs:
   find-fprj:
     runs-on: ubuntu-latest
     outputs:
-      result: ${{ steps.return-results.outputs.result }}
+      result: ${{ steps.set-output.outputs.result }}
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Find .fprj files
-        id: find-files
         run: |
-          # 递归查找所有.fprj文件并输出为JSON数组
-          find . -type f -name "*.fprj" | jq -R -n '[inputs]' > fprj_files.json
-          echo "文件已保存到fprj_files.json"
+          # 递归查找所有.fprj文件并保存为JSON数组
+          find . -type f -name "*.fprj" | jq -R -n '[inputs | select(length>0)]' > fprj_files.json
+          # 打印文件内容以便调试
+          cat fprj_files.json
 
-      - name: Create result output
-        id: return-results
+      - name: Set result output
+        id: set-output
         run: |
           # 从文件中读取生成的JSON
           json_result=$(cat fprj_files.json)
@@ -38,9 +39,19 @@ jobs:
               files: $files
             }')
           
-          # 设置作业输出
-          echo "result=$response_json" >> $GITHUB_OUTPUT
+          # 正确设置作业输出
+          echo "result=$(echo $response_json | jq -c .)" >> $GITHUB_OUTPUT
           echo "结果已设置到输出"
 
-      - name: Print result
-        run: echo "${{ steps.return-results.outputs.result }}"
+      - name: Return results via API
+        run: |
+          # 从仓库的secrets获取用户API端点
+          API_URL=${{ secrets.RESULT_API_URL }}
+          
+          # 获取作业输出
+          RESPONSE_JSON='${{ toJson(steps.set-output.outputs.result) }}'
+          
+          # 发送POST请求到用户API
+          curl -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d "$RESPONSE_JSON"
