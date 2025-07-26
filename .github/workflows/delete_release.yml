@@ -1,0 +1,33 @@
+name: Delete Release
+on: 
+  workflow_dispatch:
+    inputs:
+      release_data:
+        description: 'Release data in JSON format'
+        required: true
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Parse Release Data
+        id: parse-data
+        run: |
+          RELEASE_DATA='${{ toJson(github.event.inputs.release_data) }}'
+          echo "release_data=$RELEASE_DATA" >> $GITHUB_OUTPUT
+      
+      - name: Wait 10 minutes
+        uses: juliangruber/wait-for@v2
+        with:
+          time: 10m
+      
+      - name: Delete Release
+        uses: actions/github-script@v6
+        env:
+          PAT: ${{ secrets.PAT }}
+        with:
+          script: |
+            const releaseData = JSON.parse('${{ steps.parse-data.outputs.release_data }}');
+            // [删除逻辑同上]
