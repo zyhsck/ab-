@@ -7,51 +7,43 @@ on:
 jobs:
   find-fprj:
     runs-on: ubuntu-latest
-    outputs:
-      result: ${{ steps.set-output.outputs.result }}
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Find .fprj files
+        id: find-files
         run: |
           # 递归查找所有.fprj文件并保存为JSON数组
-          find . -type f -name "*.fprj" | jq -R -n '[inputs | select(length>0)]' > fprj_files.json
-          # 打印文件内容以便调试
-          cat fprj_files.json
+          find . -type f -name "*.fprj" | jq -R -s 'split("\n") | map(select(. != ""))' > fprj_files.json
+          echo "Found $(jq length fprj_files.json) .fprj files"
 
-      - name: Set result output
-        id: set-output
+      - name: Prepare JSON response
+        id: prepare-response
         run: |
-          # 从文件中读取生成的JSON
-          json_result=$(cat fprj_files.json)
-          
-          # 创建包含完整响应的JSON
-          response_json=$(jq -n \
+          # 创建包含完整响应的JSON文件
+          jq -n \
             --arg run_id "$GITHUB_RUN_ID" \
-            --argjson files "$json_result" \
+            --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --slurpfile files fprj_files.json \
             '{
               status: "success",
               run_id: $run_id,
-              timestamp: (now | todate),
-              file_count: ($files | length),
-              files: $files
-            }')
+              timestamp: $timestamp,
+              file_count: ($files[0] | length),
+              files: $files[0]
+            }' > response.json
           
-          # 正确设置作业输出
-          echo "result=$(echo $response_json | jq -c .)" >> $GITHUB_OUTPUT
-          echo "结果已设置到输出"
+          # 打印结果便于调试
+          echo "Response JSON:"
+          cat response.json
 
-      - name: Return results via API
+      - name: Send results
         run: |
           # 从仓库的secrets获取用户API端点
-          API_URL=${{ secrets.RESULT_API_URL }}
+          API_URL="${{ secrets.RESULT_API_URL }}"
           
-          # 获取作业输出
-          RESPONSE_JSON='${{ toJson(steps.set-output.outputs.result) }}'
-          
-          # 发送POST请求到用户API
+          # 直接使用文件发送POST请求
           curl -X POST "$API_URL" \
             -H "Content-Type: application/json" \
-            -d "$RESPONSE_JSON"
+            --data-binary "@response.json"
