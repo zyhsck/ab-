@@ -44,16 +44,31 @@ jobs:
           # 获取项目目录路径
           $sourceDir = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Parent
           
-          # 复制整个项目目录（包括所有子目录和文件）
+          # 复制整个项目目录
           Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
           
-          # 重命名FPRJ文件（确保名称一致）
+          # 重命名FPRJ文件
           $fprjFile = Get-ChildItem -Path $projectDir -Filter "*.fprj" | Select-Object -First 1
           if ($fprjFile) {
               Rename-Item -Path $fprjFile.FullName -NewName "fprj.fprj" -Force
           } else {
               Write-Error "No FPRJ file found in project directory"
               exit 1
+          }
+          
+          # 查找所有pic.png文件
+          $picFiles = Get-ChildItem -Path $projectDir -Filter "pic.png" -Recurse
+          
+          if (-not $picFiles) {
+              Write-Error "No pic.png files found in project directory"
+              exit 1
+          }
+          
+          # 替换所有pic.png文件
+          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
+          foreach ($file in $picFiles) {
+              [IO.File]::WriteAllBytes($file.FullName, $bytes)
+              Write-Host "Replaced pic.png at: $($file.FullName)"
           }
           
           # 创建输出目录
@@ -65,31 +80,12 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 6. 安装Python依赖
-      - name: Install Python dependencies
-        run: |
-          pip install psutil
-
-      # 7. 运行Python脚本
+      # 6. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 8. 调试工作目录
-      - name: Debug work directory
-        if: always()
-        run: |
-          # 输出项目目录结构
-          Get-ChildItem -Path "project" -Recurse
-          
-          # 查找编译工具日志
-          $logFile = Get-ChildItem -Path "project" -Filter "*.log" -Recurse
-          if ($logFile) {
-              Write-Host "Compiler log:"
-              Get-Content -Path $logFile.FullName
-          }
-
-      # 9. 验证输出文件
+      # 7. 验证输出文件
       - name: Verify output file
         run: |
           $file = Get-ChildItem -Path "output" -Filter "*.face"
@@ -101,7 +97,7 @@ jobs:
               exit 1
           }
 
-      # 10. 创建Release并获取下载链接
+      # 8. 创建Release并获取下载链接
       - name: Create Release and Get URL
         id: create-release
         uses: softprops/action-gh-release@v2
