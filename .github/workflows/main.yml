@@ -105,7 +105,7 @@ jobs:
           }
 
       # 8. 创建Release并获取下载链接
-      - name: Create Release and Get URL
+      - name: Create Release
         id: create-release
         uses: softprops/action-gh-release@v2
         if: success()
@@ -117,5 +117,91 @@ jobs:
           draft: false
           prerelease: false
       
+      # 9. 触发延迟删除工作流
+      - name: Trigger Delayed Deletion
+        uses: actions/github-script@v6
+        env:
+          PAT: ${{ secrets.PAT }}
+        with:
+          script: |
+            // 获取刚创建的Release信息
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: `face-${context.runId}`
+            });
+            
+            // 准备删除工作流触发负载
+            const payload = {
+              release_id: release.data.id,
+              release_tag: release.data.tag_name,
+              release_url: release.data.html_url
+            };
+            
+            // 触发延迟删除工作流
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'delete_release.yml',
+              ref: 'main',  // 替换为你的分支名
+              inputs: {
+                release_data: JSON.stringify(payload)
+              }
+            });
+            
+            console.log(`Scheduled deletion for release: ${release.data.html_url}`);
+      
     outputs:
       download_url: ${{ steps.create-release.outputs.url }}
+
+  # 新增删除工作流
+  delete_release:
+    name: Delete Release After Delay
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # 1. 解析输入参数
+      - name: Parse Release Data
+        id: parse-data
+        run: |
+          RELEASE_DATA='${{ toJson(github.event.inputs.release_data) }}'
+          echo "release_data=$RELEASE_DATA" >> $GITHUB_OUTPUT
+          echo "Parsed release data: $RELEASE_DATA"
+      
+      # 2. 等待10分钟
+      - name: Wait 10 minutes
+        uses: juliangruber/wait-for@v2
+        with:
+          time: 10m
+      
+      # 3. 删除Release
+      - name: Delete Release
+        uses: actions/github-script@v6
+        env:
+          PAT: ${{ secrets.PAT }}
+        with:
+          script: |
+            const releaseData = JSON.parse('${{ steps.parse-data.outputs.release_data }}');
+            
+            try {
+              // 删除Release
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseData.release_id
+              });
+              
+              // 删除标签
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${releaseData.release_tag}`
+              });
+              
+              console.log(`✅ Successfully deleted release: ${releaseData.release_url}`);
+            } catch (error) {
+              console.error(`❌ Failed to delete release: ${error.message}`);
+              core.setFailed('Release deletion failed');
+            }
