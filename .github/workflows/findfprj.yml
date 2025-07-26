@@ -1,5 +1,6 @@
 name: Find FPRJ Files
 on:
+  workflow_dispatch:
   repository_dispatch:
     types: [find-fprj-request]
 
@@ -7,7 +8,7 @@ jobs:
   find-fprj:
     runs-on: ubuntu-latest
     outputs:
-      run_url: ${{ steps.upload.outputs.run_url }}
+      result: ${{ steps.set-output.outputs.result }}
     
     steps:
       - name: Checkout repository
@@ -18,6 +19,7 @@ jobs:
 
       - name: Find .fprj files
         run: |
+          # 递归查找所有.fprj文件
           find . -type f -name "*.fprj" > file_list.txt
           jq -R -s 'split("\n") | map(select(. != ""))' file_list.txt > fprj_files.json
           echo "Found $(jq -r 'length' fprj_files.json) .fprj files"
@@ -35,16 +37,14 @@ jobs:
               file_count: ($files[0] | length),
               files: $files[0]
             }' > result.json
-
-      - name: Upload result as artifact
-        id: upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: fprj-results
-          path: result.json
-          retention-days: 1  # 短期保留
           
-      - name: Set run URL output
+          # 打印结果便于调试
+          cat result.json
+
+      - name: Create result output
+        id: set-output
         run: |
-          run_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          echo "run_url=$run_url" >> $GITHUB_OUTPUT
+          # 读取JSON内容并设置为输出
+          result=$(cat result.json)
+          echo "result=$result" >> $GITHUB_OUTPUT
+          echo "结果已设置为作业输出"
