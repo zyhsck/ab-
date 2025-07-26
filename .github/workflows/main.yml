@@ -165,7 +165,11 @@ jobs:
             });
             
             console.log(`Scheduled deletion for release: ${release.data.html_url}`);
-      
+      # 11. 显式返回 run_id
+      - name: Expose Run ID
+        run: |
+          echo "run_id=${{ github.run_id }}" >> $GITHUB_OUTPUT
+          echo "run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
     outputs:
       download_url: ${{ steps.create-release.outputs.url }}
 
