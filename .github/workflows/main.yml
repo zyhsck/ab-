@@ -28,9 +28,9 @@ jobs:
           wmic pagefileset list brief
           echo "Virtual memory increased to 16GB"
 
-      # 3. 统一输入格式
-      - name: Prepare Input Data
-        id: prepare-input
+      # 3. 直接处理输入数据（不再使用输出变量）
+      - name: Parse input and save data
+        id: parse-input
         run: |
           # 根据事件类型选择输入源
           if ('${{ github.event_name }}' -eq 'repository_dispatch') {
@@ -38,36 +38,34 @@ jobs:
           } else {
             $inputData = '${{ toJson(github.event.inputs.input_json) }}'
           }
-          echo "input_json=$inputData" >> $env:GITHUB_OUTPUT
-
-      # 4. 解析JSON输入并保存Base64到文件
-      - name: Parse JSON input and save Base64
-        id: parse-json
-        run: |
-          # 获取JSON输入
-          $jsonInput = '${{ steps.prepare-input.outputs.input_json }}' | ConvertFrom-Json
-          echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           
-          # 将Base64字符串保存到文件
+          # 解析JSON
+          $jsonInput = $inputData | ConvertFrom-Json
+          
+          # 保存模型路径到文件
+          $modelPath = $jsonInput.model
+          $modelPath | Out-File -FilePath "$env:RUNNER_TEMP\model_path.txt" -Encoding ascii
+          
+          # 保存Base64到文件
           $base64File = "$env:RUNNER_TEMP\image_base64.txt"
+          $jsonInput.file | Out-File -FilePath $base64File -Encoding ascii -NoNewline
           
-          # 移除可能的JSON转义字符
-          $cleanBase64 = $jsonInput.file -replace '\\"', '"' -replace '\\\\', '\\'
-          
-          # 写入文件
-          $cleanBase64 | Out-File -FilePath $base64File -Encoding ascii -NoNewline
-          
+          # 输出文件路径（不包含敏感数据）
+          echo "model_path_file=$env:RUNNER_TEMP\model_path.txt" >> $env:GITHUB_OUTPUT
           echo "base64_file=$base64File" >> $env:GITHUB_OUTPUT
 
-      # 5. 准备项目文件
+      # 4. 准备项目文件
       - name: Prepare project
         run: |
+          # 从文件读取模型路径
+          $modelPath = Get-Content -Path "$env:RUNNER_TEMP\model_path.txt"
+          
           # 创建项目目录
           $projectDir = "project"
           New-Item -ItemType Directory -Path $projectDir -Force
           
           # 获取项目目录路径
-          $sourceDir = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Parent
+          $sourceDir = Split-Path -Path $modelPath -Parent
           
           # 复制整个项目目录
           Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
@@ -90,52 +88,32 @@ jobs:
           }
           
           # 从文件读取Base64字符串
-          $base64File = "${{ steps.parse-json.outputs.base64_file }}"
+          $base64File = "${{ steps.parse-input.outputs.base64_file }}"
           $base64String = Get-Content -Path $base64File -Raw
           
-          # 调试：输出Base64字符串的前100个字符
-          Write-Host "Base64 preview: $($base64String.Substring(0, 100))..."
-          
-          # 验证Base64格式
-          if (-not ($base64String -match '^[A-Za-z0-9+/]+={0,2}$')) {
-              Write-Error "Invalid Base64 format detected"
-              exit 1
-          }
-          
           # 解码Base64
-          try {
-              $bytes = [Convert]::FromBase64String($base64String)
-          } catch {
-              Write-Error "Failed to decode Base64: $_"
-              exit 1
-          }
+          $bytes = [Convert]::FromBase64String($base64String)
           
           # 替换所有pic.png文件
           foreach ($file in $picFiles) {
-              try {
-                  [IO.File]::WriteAllBytes($file.FullName, $bytes)
-                  Write-Host "Replaced pic.png at: $($file.FullName)"
-              } catch {
-                  Write-Error "Failed to write file: $_"
-                  exit 1
-              }
+              [IO.File]::WriteAllBytes($file.FullName, $bytes)
           }
           
           # 创建输出目录
           New-Item -ItemType Directory -Path "$projectDir\output" -Force
 
-      # 6. 设置Python环境
+      # 5. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 7. 运行Python脚本
+      # 6. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 8. 验证输出文件
+      # 7. 验证输出文件
       - name: Verify output file
         run: |
           $file = Get-ChildItem -Path "output" -Filter "*.face"
@@ -147,7 +125,7 @@ jobs:
               exit 1
           }
 
-      # 9. 创建Release
+      # 8. 创建Release
       - name: Create Release
         id: create-release
         uses: softprops/action-gh-release@v2
@@ -160,7 +138,7 @@ jobs:
           draft: false
           prerelease: false
       
-      # 10. 触发延迟删除
+      # 9. 触发延迟删除
       - name: Trigger Delayed Deletion
         uses: actions/github-script@v6
         env:
@@ -188,7 +166,7 @@ jobs:
                 release_data: JSON.stringify(payload)
               }
             });
-      # 11. 显式返回 run_id
+      # 10. 显式返回 run_id
       - name: Expose Run ID
         run: |
           echo "run_id=${{ github.run_id }}" >> $GITHUB_OUTPUT
