@@ -35,6 +35,7 @@ jobs:
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
 
       # 4. 准备项目文件
+            # 4. 准备项目文件
       - name: Prepare project
         run: |
           # 创建项目目录
@@ -56,8 +57,14 @@ jobs:
               exit 1
           }
           
-          # 查找所有pic.png文件
+          # 查找所有pic.png文件（递归搜索）
           $picFiles = Get-ChildItem -Path $projectDir -Filter "pic.png" -Recurse
+          
+          # 输出搜索结果
+          Write-Host "Found $($picFiles.Count) pic.png files"
+          foreach ($file in $picFiles) {
+              Write-Host " - $($file.FullName)"
+          }
           
           if (-not $picFiles) {
               Write-Error "No pic.png files found in project directory"
