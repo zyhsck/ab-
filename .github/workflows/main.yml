@@ -1,9 +1,7 @@
 name: Generate Watch Face
 on:
-  # 新增外部API触发
   repository_dispatch:
-    types: [generate_watchface] # 与代码中event_type一致
-  # 保留原有手动触发
+    types: [generate_watchface]
   workflow_dispatch:
     inputs:
       input_json:
@@ -30,7 +28,7 @@ jobs:
           wmic pagefileset list brief
           echo "Virtual memory increased to 16GB"
 
-      # 3. 统一输入格式（新增关键步骤）
+      # 3. 统一输入格式
       - name: Prepare Input Data
         id: prepare-input
         run: |
@@ -42,13 +40,24 @@ jobs:
           }
           echo "input_json=$inputData" >> $env:GITHUB_OUTPUT
 
-      # 4. 解析JSON输入
-      - name: Parse JSON input
+      # 4. 解析JSON输入并保存Base64到文件
+      - name: Parse JSON input and save Base64
         id: parse-json
         run: |
+          # 获取JSON输入
           $jsonInput = '${{ steps.prepare-input.outputs.input_json }}' | ConvertFrom-Json
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
-          echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
+          
+          # 将Base64字符串保存到文件
+          $base64File = "$env:RUNNER_TEMP\image_base64.txt"
+          
+          # 移除可能的JSON转义字符
+          $cleanBase64 = $jsonInput.file -replace '\\"', '"' -replace '\\\\', '\\'
+          
+          # 写入文件
+          $cleanBase64 | Out-File -FilePath $base64File -Encoding ascii -NoNewline
+          
+          echo "base64_file=$base64File" >> $env:GITHUB_OUTPUT
 
       # 5. 准备项目文件
       - name: Prepare project
@@ -72,25 +81,44 @@ jobs:
               exit 1
           }
           
-          # 查找所有pic.png文件（递归搜索）
+          # 查找所有pic.png文件
           $picFiles = Get-ChildItem -Path $projectDir -Filter "pic.png" -Recurse
-          
-          # 输出搜索结果
-          Write-Host "Found $($picFiles.Count) pic.png files"
-          foreach ($file in $picFiles) {
-              Write-Host " - $($file.FullName)"
-          }
           
           if (-not $picFiles) {
               Write-Error "No pic.png files found in project directory"
               exit 1
           }
           
+          # 从文件读取Base64字符串
+          $base64File = "${{ steps.parse-json.outputs.base64_file }}"
+          $base64String = Get-Content -Path $base64File -Raw
+          
+          # 调试：输出Base64字符串的前100个字符
+          Write-Host "Base64 preview: $($base64String.Substring(0, 100))..."
+          
+          # 验证Base64格式
+          if (-not ($base64String -match '^[A-Za-z0-9+/]+={0,2}$')) {
+              Write-Error "Invalid Base64 format detected"
+              exit 1
+          }
+          
+          # 解码Base64
+          try {
+              $bytes = [Convert]::FromBase64String($base64String)
+          } catch {
+              Write-Error "Failed to decode Base64: $_"
+              exit 1
+          }
+          
           # 替换所有pic.png文件
-          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
           foreach ($file in $picFiles) {
-              [IO.File]::WriteAllBytes($file.FullName, $bytes)
-              Write-Host "Replaced pic.png at: $($file.FullName)"
+              try {
+                  [IO.File]::WriteAllBytes($file.FullName, $bytes)
+                  Write-Host "Replaced pic.png at: $($file.FullName)"
+              } catch {
+                  Write-Error "Failed to write file: $_"
+                  exit 1
+              }
           }
           
           # 创建输出目录
@@ -139,21 +167,18 @@ jobs:
           PAT: ${{ secrets.PAT }}
         with:
           script: |
-            // 获取刚创建的Release信息
             const release = await github.rest.repos.getReleaseByTag({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag: `face-${context.runId}`
             });
             
-            // 准备删除工作流触发负载
             const payload = {
               release_id: release.data.id,
               release_tag: release.data.tag_name,
               release_url: release.data.html_url
             };
             
-            // 触发延迟删除工作流
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -163,8 +188,6 @@ jobs:
                 release_data: JSON.stringify(payload)
               }
             });
-            
-            console.log(`Scheduled deletion for release: ${release.data.html_url}`);
       # 11. 显式返回 run_id
       - name: Expose Run ID
         run: |
@@ -181,21 +204,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      # 1. 解析输入参数
       - name: Parse Release Data
         id: parse-data
         run: |
           RELEASE_DATA='${{ toJson(github.event.inputs.release_data) }}'
           echo "release_data=$RELEASE_DATA" >> $GITHUB_OUTPUT
-          echo "Parsed release data: $RELEASE_DATA"
       
-      # 2. 等待10分钟
       - name: Wait 10 minutes
         uses: juliangruber/wait-for@v2
         with:
           time: 10m
       
-      # 3. 删除Release
       - name: Delete Release
         uses: actions/github-script@v6
         env:
@@ -203,24 +222,18 @@ jobs:
         with:
           script: |
             const releaseData = JSON.parse('${{ steps.parse-data.outputs.release_data }}');
-            
             try {
-              // 删除Release
               await github.rest.repos.deleteRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: releaseData.release_id
               });
-              
-              // 删除标签
               await github.rest.git.deleteRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 ref: `tags/${releaseData.release_tag}`
               });
-              
-              console.log(`✅ Successfully deleted release: ${releaseData.release_url}`);
             } catch (error) {
-              console.error(`❌ Failed to delete release: ${error.message}`);
+              console.error(`Failed to delete release: ${error.message}`);
               core.setFailed('Release deletion failed');
             }
