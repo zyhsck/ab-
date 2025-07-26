@@ -251,7 +251,7 @@ local function createWatchface(parent)
     wfRoot:add_flag(lvgl.FLAG.EVENT_BUBBLE)
 
     -- 背景
-    t.objImage = lvgl.Image(wfRoot, { x = 0, y = 0, src = imgPath("bg.bin") })
+    t.objImage = lvgl.Image(wfRoot, { x = 0, y = 0, src = imgPath("pic.png") })
 
     --倒数日方框
     t.countdown1 = Image(wfRoot, imgPath("before.bin"), { 6, 74 })
