@@ -10,17 +10,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        
+      - name: Install jq
+        run: sudo apt-get install -y jq
 
       - name: Find .fprj files
         run: |
-          # 递归查找所有.fprj文件
-          find . -type f -name "*.fprj" | jq -R -s 'split("\n") | map(select(. != ""))' > fprj_files.json
-          echo "Found $(jq length fprj_files.json) .fprj files"
+          # 递归查找所有.fprj文件并保存为JSON数组
+          find . -type f -name "*.fprj" > file_list.txt
+          jq -R -s 'split("\n") | map(select(. != ""))' file_list.txt > fprj_files.json
+          echo "Found $(jq -r 'length' fprj_files.json) .fprj files"
 
       - name: Prepare JSON response
-        id: prepare-response
         run: |
-          # 生成完整响应JSON
+          # 创建完整的响应JSON
           jq -n \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
@@ -33,50 +36,29 @@ jobs:
               files: $files[0]
             }' > response.json
           
-          # 打印部分结果便于调试
-          echo "JSON preview:"
-          jq '.files[0:3]' response.json
-
-      - name: Validate API URL
-        id: validate-api-url
-        run: |
-          API_URL="${{ secrets.RESULT_API_URL }}"
-          
-          # 验证URL格式
-          if [[ -z "$API_URL" ]]; then
-            echo "::error::RESULT_API_URL secret is not set!"
-            exit 1
-          fi
-          
-          # 检查是否包含非法字符
-          if [[ "$API_URL" =~ [\"\'<>\\\`\|\{\}\[\]] ]]; then
-            echo "::error::API URL contains invalid characters"
-            echo "Cleaned URL: ${API_URL//[\"\'<>\\\`\|\{\}\[\]]/}"
-            exit 1
-          fi
-          
-          # 验证URL协议
-          if [[ ! "$API_URL" =~ ^https?:// ]]; then
-            echo "::error::API URL must start with http:// or https://"
-            exit 1
-          fi
-          
-          # 安全显示URL部分信息
-          HOST=$(echo "$API_URL" | awk -F/ '{print $3}')
-          echo "Valid API URL for: $HOST"
-          echo "API_URL=$API_URL" >> $GITHUB_ENV
+          # 打印结果便于调试
+          echo "Generated response:"
+          jq . response.json
 
       - name: Send results
         run: |
-          # 确保URL已经被清理
-          API_URL="${{ env.API_URL }}"
+          # 检查secret是否设置
+          if [[ "$RESULT_API_URL" != "" ]]; then
+            echo "Sending to API endpoint: $RESULT_API_URL"
+            curl -X POST "$RESULT_API_URL" \
+              -H "Content-Type: application/json" \
+              --data-binary "@response.json"
+          else
+            echo "::warning::RESULT_API_URL secret not set."
+            echo "Generated response:"
+            cat response.json
+            echo "::set-output name=result::$(cat response.json)"
+          fi
+        env:
+          RESULT_API_URL: ${{ secrets.RESULT_API_URL }}
           
-          # 发送请求并添加重试
-          curl --fail-with-body \
-            --retry 3 \
-            --retry-delay 2 \
-            --max-time 30 \
-            -X POST "$API_URL" \
-            -H "Content-Type: application/json" \
-            -H "X-GitHub-Run: $GITHUB_RUN_ID" \
-            --data-binary "@response.json"
+      - name: Output result for manual use
+        if: ${{ always() }}
+        run: |
+          echo "Final result:"
+          cat response.json
