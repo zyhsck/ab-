@@ -41,16 +41,20 @@ jobs:
           $projectDir = "project"
           New-Item -ItemType Directory -Path $projectDir -Force
           
-          # 复制并重命名FPRJ文件
-          Copy-Item -Path "${{ steps.parse-json.outputs.fprj_path }}" -Destination "$projectDir\fprj.fprj" -Force
+          # 获取项目目录路径
+          $sourceDir = Split-Path -Path "${{ steps.parse-json.outputs.fprj_path }}" -Parent
           
-          # 创建图片目录
-          $imageDir = "$projectDir\images"
-          New-Item -ItemType Directory -Path $imageDir -Force
+          # 复制整个项目目录（包括所有子目录和文件）
+          Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
           
-          # 保存图片
-          $bytes = [Convert]::FromBase64String('${{ steps.parse-json.outputs.image_base64 }}')
-          [IO.File]::WriteAllBytes("$imageDir\pic.png", $bytes)
+          # 重命名FPRJ文件（确保名称一致）
+          $fprjFile = Get-ChildItem -Path $projectDir -Filter "*.fprj" | Select-Object -First 1
+          if ($fprjFile) {
+              Rename-Item -Path $fprjFile.FullName -NewName "fprj.fprj" -Force
+          } else {
+              Write-Error "No FPRJ file found in project directory"
+              exit 1
+          }
           
           # 创建输出目录
           New-Item -ItemType Directory -Path "$projectDir\output" -Force
@@ -75,11 +79,11 @@ jobs:
       - name: Debug work directory
         if: always()
         run: |
-          # 输出工作目录结构
-          Get-ChildItem -Path "work" -Recurse
+          # 输出项目目录结构
+          Get-ChildItem -Path "project" -Recurse
           
           # 查找编译工具日志
-          $logFile = Get-ChildItem -Path "work" -Filter "*.log" -Recurse
+          $logFile = Get-ChildItem -Path "project" -Filter "*.log" -Recurse
           if ($logFile) {
               Write-Host "Compiler log:"
               Get-Content -Path $logFile.FullName
