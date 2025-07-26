@@ -1,5 +1,9 @@
 name: Generate Watch Face
 on:
+  # 新增外部API触发
+  repository_dispatch:
+    types: [generate_watchface] # 与代码中event_type一致
+  # 保留原有手动触发
   workflow_dispatch:
     inputs:
       input_json:
@@ -26,16 +30,27 @@ jobs:
           wmic pagefileset list brief
           echo "Virtual memory increased to 16GB"
 
-      # 3. 解析JSON输入
+      # 3. 统一输入格式（新增关键步骤）
+      - name: Prepare Input Data
+        id: prepare-input
+        run: |
+          # 根据事件类型选择输入源
+          if ('${{ github.event_name }}' -eq 'repository_dispatch') {
+            $inputData = '${{ toJson(github.event.client_payload.input_json) }}'
+          } else {
+            $inputData = '${{ toJson(github.event.inputs.input_json) }}'
+          }
+          echo "input_json=$inputData" >> $env:GITHUB_OUTPUT
+
+      # 4. 解析JSON输入
       - name: Parse JSON input
         id: parse-json
         run: |
-          $jsonInput = '${{ github.event.inputs.input_json }}' | ConvertFrom-Json
+          $jsonInput = '${{ steps.prepare-input.outputs.input_json }}' | ConvertFrom-Json
           echo "fprj_path=$($jsonInput.model)" >> $env:GITHUB_OUTPUT
           echo "image_base64=$($jsonInput.file)" >> $env:GITHUB_OUTPUT
 
-      # 4. 准备项目文件
-            # 4. 准备项目文件
+      # 5. 准备项目文件
       - name: Prepare project
         run: |
           # 创建项目目录
@@ -81,18 +96,18 @@ jobs:
           # 创建输出目录
           New-Item -ItemType Directory -Path "$projectDir\output" -Force
 
-      # 5. 设置Python环境
+      # 6. 设置Python环境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 6. 运行Python脚本
+      # 7. 运行Python脚本
       - name: Run Python script
         run: |
           python compile_watchface.py
 
-      # 7. 验证输出文件
+      # 8. 验证输出文件
       - name: Verify output file
         run: |
           $file = Get-ChildItem -Path "output" -Filter "*.face"
@@ -104,7 +119,7 @@ jobs:
               exit 1
           }
 
-      # 8. 创建Release并获取下载链接
+      # 9. 创建Release
       - name: Create Release
         id: create-release
         uses: softprops/action-gh-release@v2
@@ -117,7 +132,7 @@ jobs:
           draft: false
           prerelease: false
       
-      # 9. 触发延迟删除工作流
+      # 10. 触发延迟删除
       - name: Trigger Delayed Deletion
         uses: actions/github-script@v6
         env:
@@ -143,7 +158,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'delete_release.yml',
-              ref: 'main',  // 替换为你的分支名
+              ref: 'main',
               inputs: {
                 release_data: JSON.stringify(payload)
               }
@@ -154,7 +169,7 @@ jobs:
     outputs:
       download_url: ${{ steps.create-release.outputs.url }}
 
-  # 新增删除工作流
+  # 删除工作流
   delete_release:
     name: Delete Release After Delay
     needs: generate
