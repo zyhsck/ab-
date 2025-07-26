@@ -21,7 +21,7 @@ logging.basicConfig(
 class WatchfaceCompiler:
     def __init__(self, project_path, output_dir):
         """
-        全新解决方案：直接在项目目录运行编译工具
+        精简解决方案：只替换pic.png
         :param project_path: 项目文件路径(.fprj)
         :param output_dir: 输出目录路径
         """
@@ -41,7 +41,7 @@ class WatchfaceCompiler:
 
     def compile(self):
         """
-        编译主流程 - 直接在项目目录运行
+        编译主流程
         :return: 成功返回True，失败返回False
         """
         try:
@@ -103,7 +103,6 @@ class WatchfaceCompiler:
             ]
             
             logging.info(f"Executing command: {' '.join(cmd)}")
-            logging.info(f"Working directory: {self.project_path.parent}")
             
             # 创建输出目录
             output_dir = self.project_path.parent / "output"
@@ -151,14 +150,7 @@ class WatchfaceCompiler:
         
         if not project_output_file.exists():
             logging.error(f"Output file not generated: {project_output_file}")
-            # 检查可能的其他位置
-            alt_path = self.project_path.parent / output_filename
-            if alt_path.exists():
-                logging.info(f"Found output file in alternative location: {alt_path}")
-                shutil.move(str(alt_path), str(output_file))
-                return True
-            else:
-                return False
+            return False
             
         try:
             # 移动文件到输出目录
