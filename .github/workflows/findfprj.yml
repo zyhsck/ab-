@@ -1,0 +1,41 @@
+name: Find FPRJ Files
+on:
+  workflow_dispatch: # 允许手动触发
+  repository_dispatch: # 允许通过API触发
+    types: [find-fprj-request]
+
+jobs:
+  find-fprj:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find .fprj files
+        id: find-files
+        run: |
+          # 递归查找所有.fprj文件并输出为JSON数组
+          files=$(find . -type f -name "*.fprj" | jq -R -n '[inputs | select(length>0)]')
+          echo "files_json=$files" >> $GITHUB_OUTPUT
+
+      - name: Return results via API
+        run: |
+          # 从仓库的secrets获取用户API端点
+          API_URL=${{ secrets.RESULT_API_URL }}
+          
+          # 构造JSON响应体
+          response_json=$(jq -n \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --argjson files "${{ steps.find-files.outputs.files_json }}" \
+            '{
+              status: "success",
+              run_id: $run_id,
+              timestamp: (now | todate),
+              file_count: ($files | length),
+              files: $files
+            }')
+          
+          # 发送POST请求到用户API
+          curl -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d "$response_json"
