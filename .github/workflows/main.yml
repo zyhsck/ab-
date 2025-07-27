@@ -28,7 +28,7 @@ jobs:
           wmic pagefileset list brief
           echo "Virtual memory increased to 16GB"
 
-      # 3. 直接处理输入数据（不再使用输出变量）
+      # 3. 直接处理输入数据
       - name: Parse input and save data
         id: parse-input
         run: |
@@ -50,7 +50,7 @@ jobs:
           $base64File = "$env:RUNNER_TEMP\image_base64.txt"
           $jsonInput.file | Out-File -FilePath $base64File -Encoding ascii -NoNewline
           
-          # 输出文件路径（不包含敏感数据）
+          # 输出文件路径
           echo "model_path_file=$env:RUNNER_TEMP\model_path.txt" >> $env:GITHUB_OUTPUT
           echo "base64_file=$base64File" >> $env:GITHUB_OUTPUT
 
@@ -115,11 +115,14 @@ jobs:
 
       # 7. 验证输出文件
       - name: Verify output file
+        id: verify-output
         run: |
-          $file = Get-ChildItem -Path "output" -Filter "*.face"
+          $file = Get-ChildItem -Path "project\output" -Filter "*.face"
           if ($file) {
               $size = $file.Length
               Write-Host "Output file size: $size bytes"
+              # 将文件路径存储为输出
+              echo "face_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
           } else {
               Write-Error "No output file found"
               exit 1
@@ -134,84 +137,64 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
           tag_name: "face-${{ github.run_id }}"
-          files: output/*.face
+          files: ${{ steps.verify-output.outputs.face_file }}
           draft: false
           prerelease: false
+        # 捕获release信息作为输出
+        continue-on-error: false
       
-      # 9. 触发延迟删除
-      - name: Trigger Delayed Deletion
-        uses: actions/github-script@v6
-        env:
-          PAT: ${{ secrets.PAT }}
-        with:
-          script: |
-            const release = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: `face-${context.runId}`
-            });
-            
-            const payload = {
-              release_id: release.data.id,
-              release_tag: release.data.tag_name,
-              release_url: release.data.html_url
-            };
-            
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'delete_release.yml',
-              ref: 'main',
-              inputs: {
-                release_data: JSON.stringify(payload)
-              }
-            });
-      # 10. 显式返回 run_id
-      - name: Expose Run ID
+      # 9. 传递release信息给删除任务
+      - name: Pass release data
+        id: pass-data
         run: |
-          echo "run_id=${{ github.run_id }}" >> $GITHUB_OUTPUT
-          echo "run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
+          echo "release_id=${{ steps.create-release.outputs.id }}" >> $env:GITHUB_OUTPUT
+          echo "release_tag=face-${{ github.run_id }}" >> $env:GITHUB_OUTPUT
     outputs:
-      download_url: ${{ steps.create-release.outputs.url }}
+      release_id: ${{ steps.pass-data.outputs.release_id }}
+      release_tag: ${{ steps.pass-data.outputs.release_tag }}
 
-  # 删除工作流
+  # 自动删除release任务
   delete_release:
-    name: Delete Release After Delay
+    name: Auto-Delete Release
     needs: generate
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Parse Release Data
-        id: parse-data
-        run: |
-          RELEASE_DATA='${{ toJson(github.event.inputs.release_data) }}'
-          echo "release_data=$RELEASE_DATA" >> $GITHUB_OUTPUT
-      
+      # 1. 等待10分钟
       - name: Wait 10 minutes
         uses: juliangruber/wait-for@v2
         with:
           time: 10m
       
+      # 2. 删除release和标签
       - name: Delete Release
         uses: actions/github-script@v6
         env:
           PAT: ${{ secrets.PAT }}
         with:
           script: |
-            const releaseData = JSON.parse('${{ steps.parse-data.outputs.release_data }}');
+            const release_id = ${{ needs.generate.outputs.release_id }};
+            const release_tag = '${{ needs.generate.outputs.release_tag }}';
+            
             try {
+              // 删除release
               await github.rest.repos.deleteRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                release_id: releaseData.release_id
+                release_id: release_id
               });
+              
+              // 删除Git标签
               await github.rest.git.deleteRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: `tags/${releaseData.release_tag}`
+                ref: `tags/${release_tag}`
               });
+              
+              console.log(`Successfully deleted release ${release_id} and tag ${release_tag}`);
             } catch (error) {
-              console.error(`Failed to delete release: ${error.message}`);
-              core.setFailed('Release deletion failed');
+              console.error(`Deletion failed: ${error.message}`);
+              // 标记步骤失败但不中断工作流
+              core.setFailed(`Release deletion error: ${error.message}`);
             }
