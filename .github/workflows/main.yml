@@ -108,26 +108,28 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 6. 运行Python脚本
-      - name: Run Python script
+      # 6. 运行Python脚本 (更新版)
+      - name: 运行Python脚本
+        env:
+          PROJECT_PATH: "${{ github.workspace }}/project/fprj.fprj"
+          OUTPUT_DIR: "${{ github.workspace }}/output"
         run: |
           python compile_watchface.py
-
-      # 7. 验证输出文件
-      - name: Verify output file
+      
+      # 7. 验证输出文件 (更新版)
+      - name: 验证输出文件
         id: verify-output
         run: |
-          $file = Get-ChildItem -Path "project\output" -Filter "*.face"
+          $outputDir = "${{ github.workspace }}/output"
+          $file = Get-ChildItem -Path $outputDir -Filter "*.face"
           if ($file) {
               $size = $file.Length
-              Write-Host "Output file size: $size bytes"
-              # 将文件路径存储为输出
+              Write-Host "输出文件大小: $size 字节"
               echo "face_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
           } else {
-              Write-Error "No output file found"
+              Write-Error "未找到输出文件"
               exit 1
           }
-
       # 8. 创建Release
       - name: Create Release
         id: create-release
