@@ -1,205 +1,119 @@
-import os
-import sys
-import io
-import logging
-import pathlib
-import shutil
-import subprocess
-from binary import WatchfaceBinary
-
-# 强制UTF-8编码
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-
-# 配置日志系统
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-
-class WatchfaceCompiler:
-    def __init__(self, project_path, output_dir):
-        """
-        初始化编译器
-        :param project_path: 项目文件路径(.fprj)
-        :param output_dir: 最终输出目录路径
-        """
-        try:
-            # 使用pathlib处理路径
-            self.project_path = pathlib.Path(project_path).resolve()
-            self.final_output_dir = pathlib.Path(output_dir).resolve()
-            
-            # 编译工具的输出目录（在项目目录下）
-            self.temp_output_dir = self.project_path.parent / "output"
-            
-            # 确保所有目录存在
-            self.final_output_dir.mkdir(parents=True, exist_ok=True)
-            
-            logging.info(f"Project path: {self.project_path}")
-            logging.info(f"Final output directory: {self.final_output_dir}")
-            logging.info(f"Temporary output directory: {self.temp_output_dir}")
-        except Exception as e:
-            logging.error(f"Initialization failed: {str(e)}", exc_info=True)
-            raise
-
-    def compile(self):
-        """
-        编译主流程
-        :return: 成功返回True，失败返回False
-        """
-        try:
-            # 1. 验证项目文件
-            if not self._validate_project_file():
-                return False
-                
-            # 2. 准备输出文件名
-            output_filename = self.project_path.stem + ".face"
-            final_output_file = self.final_output_dir / output_filename
-            
-            # 3. 运行编译工具
-            if not self._run_compile_tool(output_filename):
-                return False
-                
-            # 4. 移动输出文件
-            if not self._move_output_file(output_filename, final_output_file):
-                return False
-                
-            # 5. 设置表盘ID
-            return self._set_watchface_id(final_output_file)
-            
-        except Exception as e:
-            logging.error(f"Compilation error: {str(e)}", exc_info=True)
-            return False
-
-    def _validate_project_file(self):
-        """验证项目文件"""
-        if not self.project_path.exists():
-            logging.error(f"Project file not found: {self.project_path}")
-            return False
-            
-        file_size = os.path.getsize(self.project_path)
-        if file_size == 0:
-            logging.error(f"Project file is empty: {self.project_path}")
-            return False
-            
-        logging.info(f"Project file size: {file_size} bytes")
-        return True
-
-    def _run_compile_tool(self, output_filename):
-        """运行编译工具"""
-        try:
-            # 编译工具路径（相对于脚本位置）
-            compile_tool = pathlib.Path(__file__).parent / "compile.exe"
-            
-            if not compile_tool.exists():
-                logging.error(f"Compiler tool not found at: {compile_tool}")
-                return False
-            
-            # 准备命令参数
-            cmd = [
-                str(compile_tool),
-                "-b",
-                str(self.project_path),
-                "output",  # 编译工具会在项目目录下创建output子目录
-                output_filename,
-                "1461256429"
-            ]
-            
-            logging.info(f"Executing command: {' '.join(cmd)}")
-            
-            # 确保临时输出目录存在
-            self.temp_output_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Created temporary output directory: {self.temp_output_dir}")
-            
-            # 设置环境变量优化内存
-            env = os.environ.copy()
-            env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
-            env["COMPlus_gcServer"] = "1"  # 启用服务器GC
-            env["COMPlus_gcConcurrent"] = "1"  # 启用并发GC
-            
-            # 使用subprocess执行命令
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.project_path.parent),
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                shell=True,
-                env=env
-            )
-            
-            # 记录输出
-            if result.stdout:
-                logging.info(f"Compiler output:\n{result.stdout}")
-            if result.stderr:
-                logging.warning(f"Compiler warnings:\n{result.stderr}")
-                
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Compilation failed (exit code {e.returncode}):\n{e.stderr}")
-            return False
-        except Exception as e:
-            logging.error(f"Command execution error: {str(e)}")
-            return False
-
-    def _move_output_file(self, output_filename, final_output_file):
-        """移动输出文件到最终目录"""
-        # 编译工具生成的临时输出文件路径
-        temp_output_file = self.temp_output_dir / output_filename
-        
-        if not temp_output_file.exists():
-            logging.error(f"Output file not generated: {temp_output_file}")
-            return False
-            
-        try:
-            # 移动文件到最终输出目录
-            shutil.move(str(temp_output_file), str(final_output_file))
-            logging.info(f"Moved output file to: {final_output_file}")
-            return True
-        except Exception as e:
-            logging.error(f"Failed to move output file: {str(e)}")
-            return False
-
-    def _set_watchface_id(self, output_file):
-        """设置表盘ID"""
-        try:
-            # 检查文件大小
-            file_size = os.path.getsize(output_file)
-            if file_size < 9:
-                logging.error(f"File too small to set ID: {file_size} bytes")
-                return False
-                
-            # 设置ID
-            binary = WatchfaceBinary(str(output_file))
-            binary.setId("123456789")
-            logging.info(f"Set watch face ID: 123456789")
-            return True
-        except Exception as e:
-            logging.error(f"Failed to set watch face ID: {str(e)}")
-            return False
-
-
-if __name__ == "__main__":
-    try:
-        # 从环境变量获取路径（GitHub Actions兼容）
-        project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
-        output_dir = os.getenv("OUTPUT_DIR", "output")
-        
-        compiler = WatchfaceCompiler(
-            project_path=project_path,
-            output_dir=output_dir
-        )
-        
-        if compiler.compile():
-            print("Compile success")
-            sys.exit(0)
-        else:
-            print("Compile failed")
-            sys.exit(1)
-    except Exception as e:
-        print(f"Program error: {str(e)}")
-        sys.exit(1)
+import os #line:1
+import sys #line:2
+import io #line:3
+import logging #line:4
+import pathlib #line:5
+import shutil #line:6
+import subprocess #line:7
+from binary import WatchfaceBinary #line:8
+sys .stdout =io .TextIOWrapper (sys .stdout .buffer ,encoding ='utf-8',errors ='replace')#line:11
+sys .stderr =io .TextIOWrapper (sys .stderr .buffer ,encoding ='utf-8',errors ='replace')#line:12
+logging .basicConfig (level =logging .INFO ,format ='%(asctime)s - %(levelname)s - %(message)s',handlers =[logging .StreamHandler (sys .stdout )])#line:19
+class WatchfaceCompiler :#line:21
+    def __init__ (O0O00OOOOOOO000O0 ,OOOOO000OO0OOOO00 ,O0OO0000O00OO0O0O ):#line:22
+        ""#line:27
+        try :#line:28
+            O0O00OOOOOOO000O0 .project_path =pathlib .Path (OOOOO000OO0OOOO00 ).resolve ()#line:30
+            O0O00OOOOOOO000O0 .final_output_dir =pathlib .Path (O0OO0000O00OO0O0O ).resolve ()#line:31
+            O0O00OOOOOOO000O0 .temp_output_dir =O0O00OOOOOOO000O0 .project_path .parent /"output"#line:34
+            O0O00OOOOOOO000O0 .final_output_dir .mkdir (parents =True ,exist_ok =True )#line:37
+            logging .info (f"Project path: {O0O00OOOOOOO000O0.project_path}")#line:39
+            logging .info (f"Final output directory: {O0O00OOOOOOO000O0.final_output_dir}")#line:40
+            logging .info (f"Temporary output directory: {O0O00OOOOOOO000O0.temp_output_dir}")#line:41
+        except Exception as O00000OOOOO000OOO :#line:42
+            logging .error (f"Initialization failed: {str(O00000OOOOO000OOO)}",exc_info =True )#line:43
+            raise #line:44
+    def compile (O00O0O0000OOOOO0O ):#line:46
+        ""#line:50
+        try :#line:51
+            if not O00O0O0000OOOOO0O ._validate_project_file ():#line:53
+                return False #line:54
+            OOO00O000O0OOO0OO =O00O0O0000OOOOO0O .project_path .stem +".face"#line:57
+            OOO0OO00O00000O0O =O00O0O0000OOOOO0O .final_output_dir /OOO00O000O0OOO0OO #line:58
+            if not O00O0O0000OOOOO0O ._run_compile_tool (OOO00O000O0OOO0OO ):#line:61
+                return False #line:62
+            if not O00O0O0000OOOOO0O ._move_output_file (OOO00O000O0OOO0OO ,OOO0OO00O00000O0O ):#line:65
+                return False #line:66
+            return O00O0O0000OOOOO0O ._set_watchface_id (OOO0OO00O00000O0O )#line:69
+        except Exception as O0OOOOOO0OO0O0OO0 :#line:71
+            logging .error (f"Compilation error: {str(O0OOOOOO0OO0O0OO0)}",exc_info =True )#line:72
+            return False #line:73
+    def _validate_project_file (O0OOO0O00000000OO ):#line:75
+        ""#line:76
+        if not O0OOO0O00000000OO .project_path .exists ():#line:77
+            logging .error (f"Project file not found: {O0OOO0O00000000OO.project_path}")#line:78
+            return False #line:79
+        O0O00OO0OOO00O0OO =os .path .getsize (O0OOO0O00000000OO .project_path )#line:81
+        if O0O00OO0OOO00O0OO ==0 :#line:82
+            logging .error (f"Project file is empty: {O0OOO0O00000000OO.project_path}")#line:83
+            return False #line:84
+        logging .info (f"Project file size: {O0O00OO0OOO00O0OO} bytes")#line:86
+        return True #line:87
+    def _run_compile_tool (O0OOOOO0O0000OO00 ,O0O00OO00O00OO0O0 ):#line:89
+        ""#line:90
+        try :#line:91
+            OO00OOOOO000OOO00 =pathlib .Path (__file__ ).parent /"compile.exe"#line:93
+            if not OO00OOOOO000OOO00 .exists ():#line:95
+                logging .error (f"Compiler tool not found at: {OO00OOOOO000OOO00}")#line:96
+                return False #line:97
+            O0O0OOOO00000OOOO =[str (OO00OOOOO000OOO00 ),"-b",str (O0OOOOO0O0000OO00 .project_path ),"output",O0O00OO00O00OO0O0 ,"1461256429"]#line:107
+            logging .info (f"Executing command: {' '.join(O0O0OOOO00000OOOO)}")#line:109
+            O0OOOOO0O0000OO00 .temp_output_dir .mkdir (parents =True ,exist_ok =True )#line:112
+            logging .info (f"Created temporary output directory: {O0OOOOO0O0000OO00.temp_output_dir}")#line:113
+            O0O0O000O0O0O000O =os .environ .copy ()#line:116
+            O0O0O000O0O0O000O ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"]="1"#line:117
+            O0O0O000O0O0O000O ["COMPlus_gcServer"]="1"#line:118
+            O0O0O000O0O0O000O ["COMPlus_gcConcurrent"]="1"#line:119
+            OOOOO00000O0O0OO0 =subprocess .run (O0O0OOOO00000OOOO ,cwd =str (O0OOOOO0O0000OO00 .project_path .parent ),check =True ,stdout =subprocess .PIPE ,stderr =subprocess .PIPE ,text =True ,encoding ='utf-8',shell =True ,env =O0O0O000O0O0O000O )#line:132
+            if OOOOO00000O0O0OO0 .stdout :#line:135
+                logging .info (f"Compiler output:\n{OOOOO00000O0O0OO0.stdout}")#line:136
+            if OOOOO00000O0O0OO0 .stderr :#line:137
+                logging .warning (f"Compiler warnings:\n{OOOOO00000O0O0OO0.stderr}")#line:138
+            return True #line:140
+        except subprocess .CalledProcessError as OO00OO0OOO000OO0O :#line:142
+            logging .error (f"Compilation failed (exit code {OO00OO0OOO000OO0O.returncode}):\n{OO00OO0OOO000OO0O.stderr}")#line:143
+            return False #line:144
+        except Exception as OO00OO0OOO000OO0O :#line:145
+            logging .error (f"Command execution error: {str(OO00OO0OOO000OO0O)}")#line:146
+            return False #line:147
+    def _move_output_file (OO0O000OO00O0OO00 ,OOOOOOO00O0O00000 ,OO0OO0OO0O0O0OOO0 ):#line:149
+        ""#line:150
+        O0O0O000O00000O00 =OO0O000OO00O0OO00 .temp_output_dir /OOOOOOO00O0O00000 #line:152
+        if not O0O0O000O00000O00 .exists ():#line:154
+            logging .error (f"Output file not generated: {O0O0O000O00000O00}")#line:155
+            return False #line:156
+        try :#line:158
+            shutil .move (str (O0O0O000O00000O00 ),str (OO0OO0OO0O0O0OOO0 ))#line:160
+            logging .info (f"Moved output file to: {OO0OO0OO0O0O0OOO0}")#line:161
+            return True #line:162
+        except Exception as O0O0O00O000OOOOOO :#line:163
+            logging .error (f"Failed to move output file: {str(O0O0O00O000OOOOOO)}")#line:164
+            return False #line:165
+    def _set_watchface_id (OO0O00O0O000O0O0O ,OO0O0O00O0OO000OO ):#line:167
+        ""#line:168
+        try :#line:169
+            O0OO0000OO00O00OO =os .path .getsize (OO0O0O00O0OO000OO )#line:171
+            if O0OO0000OO00O00OO <9 :#line:172
+                logging .error (f"File too small to set ID: {O0OO0000OO00O00OO} bytes")#line:173
+                return False #line:174
+            O0O0OO0O0000OO00O =WatchfaceBinary (str (OO0O0O00O0OO000OO ))#line:177
+            O0O0OO0O0000OO00O .setId ("123456789")#line:178
+            logging .info (f"Set watch face ID: 123456789")#line:179
+            return True #line:180
+        except Exception as OOO00O0OO0O00O000 :#line:181
+            logging .error (f"Failed to set watch face ID: {str(OOO00O0OO0O00O000)}")#line:182
+            return False #line:183
+if __name__ =="__main__":#line:186
+    try :#line:187
+        project_path =os .getenv ("PROJECT_PATH","project/fprj.fprj")#line:189
+        output_dir =os .getenv ("OUTPUT_DIR","output")#line:190
+        compiler =WatchfaceCompiler (project_path =project_path ,output_dir =output_dir )#line:195
+        if compiler .compile ():#line:197
+            print ("Compile success")#line:198
+            sys .exit (0 )#line:199
+        else :#line:200
+            print ("Compile failed")#line:201
+            sys .exit (1 )#line:202
+    except Exception as e :#line:203
+        print (f"Program error: {str(e)}")#line:204
+        sys .exit (1 )#line:205
