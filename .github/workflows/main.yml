@@ -1,4 +1,5 @@
-name: Generate Watch Face
+name: Watch Face Generator with Auto-Cleanup
+
 on:
   repository_dispatch:
     types: [generate_watchface]
@@ -15,12 +16,12 @@ jobs:
       contents: write
       
     steps:
-      # 1. 检出代码
+      # 1. Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 增加虚拟内存到16GB
-      - name: Increase virtual memory
+      # 2. Increase virtual memory
+      - name: Increase virtual memory to 16GB
         run: |
           wmic computersystem set AutomaticManagedPagefile=False
           wmic pagefileset create name="C:\pagefile.sys"
@@ -28,113 +29,76 @@ jobs:
           wmic pagefileset list brief
           echo "Virtual memory increased to 16GB"
 
-      # 3. 直接处理输入数据
-      - name: Parse input and save data
+      # 3. Process input data
+      - name: Parse input JSON
         id: parse-input
         run: |
-          # 根据事件类型选择输入源
-          if ('${{ github.event_name }}' -eq 'repository_dispatch') {
-            $inputData = '${{ toJson(github.event.client_payload.input_json) }}'
+          $inputData = if ('${{ github.event_name }}' -eq 'repository_dispatch') {
+            '${{ toJson(github.event.client_payload.input_json) }}'
           } else {
-            $inputData = '${{ toJson(github.event.inputs.input_json) }}'
+            '${{ toJson(github.event.inputs.input_json) }}'
           }
           
-          # 解析JSON
           $jsonInput = $inputData | ConvertFrom-Json
+          $jsonInput.model | Out-File "$env:RUNNER_TEMP\model_path.txt"
+          $jsonInput.file | Out-File "$env:RUNNER_TEMP\image_base64.txt" -NoNewline
           
-          # 保存模型路径到文件
-          $modelPath = $jsonInput.model
-          $modelPath | Out-File -FilePath "$env:RUNNER_TEMP\model_path.txt" -Encoding ascii
-          
-          # 保存Base64到文件
-          $base64File = "$env:RUNNER_TEMP\image_base64.txt"
-          $jsonInput.file | Out-File -FilePath $base64File -Encoding ascii -NoNewline
-          
-          # 输出文件路径
           echo "model_path_file=$env:RUNNER_TEMP\model_path.txt" >> $env:GITHUB_OUTPUT
-          echo "base64_file=$base64File" >> $env:GITHUB_OUTPUT
+          echo "base64_file=$env:RUNNER_TEMP\image_base64.txt" >> $env:GITHUB_OUTPUT
 
-      # 4. 准备项目文件
-      - name: Prepare project
+      # 4. Prepare project files
+      - name: Prepare project directory
         run: |
-          # 从文件读取模型路径
-          $modelPath = Get-Content -Path "$env:RUNNER_TEMP\model_path.txt"
-          
-          # 创建项目目录
+          $modelPath = Get-Content "$env:RUNNER_TEMP\model_path.txt"
           $projectDir = "project"
-          New-Item -ItemType Directory -Path $projectDir -Force
+          New-Item -Type Directory -Path $projectDir -Force
           
-          # 获取项目目录路径
-          $sourceDir = Split-Path -Path $modelPath -Parent
+          Copy-Item "$(Split-Path $modelPath -Parent)\*" $projectDir -Recurse
           
-          # 复制整个项目目录
-          Copy-Item -Path "$sourceDir\*" -Destination $projectDir -Recurse -Force
-          
-          # 重命名FPRJ文件
-          $fprjFile = Get-ChildItem -Path $projectDir -Filter "*.fprj" | Select-Object -First 1
+          $fprjFile = Get-ChildItem $projectDir -Filter "*.fprj" | Select-Object -First 1
           if ($fprjFile) {
-              Rename-Item -Path $fprjFile.FullName -NewName "fprj.fprj" -Force
+              Rename-Item $fprjFile.FullName "fprj.fprj" -Force
           } else {
-              Write-Error "No FPRJ file found in project directory"
+              Write-Error "No FPRJ file found"
               exit 1
           }
           
-          # 查找所有pic.png文件
-          $picFiles = Get-ChildItem -Path $projectDir -Filter "pic.png" -Recurse
-          
-          if (-not $picFiles) {
-              Write-Error "No pic.png files found in project directory"
-              exit 1
+          $bytes = [Convert]::FromBase64String((Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw))
+          Get-ChildItem $projectDir -Filter "pic.png" -Recurse | ForEach-Object {
+              [IO.File]::WriteAllBytes($_.FullName, $bytes)
           }
           
-          # 从文件读取Base64字符串
-          $base64File = "${{ steps.parse-input.outputs.base64_file }}"
-          $base64String = Get-Content -Path $base64File -Raw
-          
-          # 解码Base64
-          $bytes = [Convert]::FromBase64String($base64String)
-          
-          # 替换所有pic.png文件
-          foreach ($file in $picFiles) {
-              [IO.File]::WriteAllBytes($file.FullName, $bytes)
-          }
-          
-          # 创建输出目录
-          New-Item -ItemType Directory -Path "$projectDir\output" -Force
+          New-Item -Type Directory -Path "$projectDir\output" -Force
 
-      # 5. 设置Python环境
-      - name: Set up Python
+      # 5. Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 6. 运行Python脚本 (更新版)
-      - name: 运行Python脚本
+      # 6. Run compilation script
+      - name: Compile Watch Face
         env:
           PROJECT_PATH: "${{ github.workspace }}/project/fprj.fprj"
           OUTPUT_DIR: "${{ github.workspace }}/output"
-        run: |
-          python compile_watchface.py
+        run: python compile_watchface.py
       
-      # 7. 验证输出文件 (更新版)
-      - name: 验证输出文件
+      # 7. Verify output
+      - name: Verify Output File
         id: verify-output
         run: |
-          $outputDir = "${{ github.workspace }}/output"
-          $file = Get-ChildItem -Path $outputDir -Filter "*.face"
+          $file = Get-ChildItem "${{ github.workspace }}/output" -Filter "*.face"
           if ($file) {
-              $size = $file.Length
-              Write-Host "输出文件大小: $size 字节"
               echo "face_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
           } else {
-              Write-Error "未找到输出文件"
+              Write-Error "Output file not found"
               exit 1
           }
-      # 8. 创建Release
+
+      # 8. Create Release
       - name: Create Release
         id: create-release
         uses: softprops/action-gh-release@v2
-        if: success()
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
@@ -142,20 +106,18 @@ jobs:
           files: ${{ steps.verify-output.outputs.face_file }}
           draft: false
           prerelease: false
-        # 捕获release信息作为输出
-        continue-on-error: false
-      
-      # 9. 传递release信息给删除任务
-      - name: Pass release data
+
+      # 9. Pass release data
+      - name: Store Release Data
         id: pass-data
         run: |
           echo "release_id=${{ steps.create-release.outputs.id }}" >> $env:GITHUB_OUTPUT
           echo "release_tag=face-${{ github.run_id }}" >> $env:GITHUB_OUTPUT
+
     outputs:
       release_id: ${{ steps.pass-data.outputs.release_id }}
       release_tag: ${{ steps.pass-data.outputs.release_tag }}
 
-  # 自动删除release任务
   delete_release:
     name: Auto-Delete Release
     needs: generate
@@ -163,40 +125,47 @@ jobs:
     permissions:
       contents: write
     steps:
-      # 1. 等待10分钟
-      - name: Wait 10 minutes
-        uses: juliangruber/wait-for@v2
-        with:
-          time: 10m
+      # 1. Wait 10 minutes (using native sleep)
+      - name: Wait for 10 minutes
+        run: sleep 600
       
-      # 2. 删除release和标签
-      - name: Delete Release
+      # 2. Delete release and tag
+      - name: Delete Release Assets
         uses: actions/github-script@v6
         env:
-          PAT: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
           script: |
-            const release_id = ${{ needs.generate.outputs.release_id }};
-            const release_tag = '${{ needs.generate.outputs.release_tag }}';
+            const { release_id, release_tag } = {
+              release_id: ${{ needs.generate.outputs.release_id }},
+              release_tag: '${{ needs.generate.outputs.release_tag }}'
+            };
+            
+            if (!release_id || !release_tag) {
+              core.setFailed('Missing release information');
+              return;
+            }
             
             try {
-              // 删除release
+              // Delete release
               await github.rest.repos.deleteRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: release_id
               });
               
-              // 删除Git标签
+              // Delete tag
               await github.rest.git.deleteRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 ref: `tags/${release_tag}`
               });
               
-              console.log(`Successfully deleted release ${release_id} and tag ${release_tag}`);
+              core.info(`Successfully deleted release ${release_id} and tag ${release_tag}`);
             } catch (error) {
-              console.error(`Deletion failed: ${error.message}`);
-              // 标记步骤失败但不中断工作流
-              core.setFailed(`Release deletion error: ${error.message}`);
+              if (error.status === 404) {
+                core.warning('Release or tag not found (may have been already deleted)');
+              } else {
+                core.setFailed(`Deletion failed: ${error.message}`);
+              }
             }
