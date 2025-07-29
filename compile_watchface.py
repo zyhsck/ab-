@@ -21,20 +21,24 @@ logging.basicConfig(
 class WatchfaceCompiler:
     def __init__(self, project_path, output_dir):
         """
-        精简解决方案：只替换pic.png
+        初始化编译器
         :param project_path: 项目文件路径(.fprj)
-        :param output_dir: 输出目录路径
+        :param output_dir: 最终输出目录路径
         """
         try:
             # 使用pathlib处理路径
             self.project_path = pathlib.Path(project_path).resolve()
-            self.output_dir = pathlib.Path(output_dir).resolve()
+            self.final_output_dir = pathlib.Path(output_dir).resolve()
             
-            # 确保输出目录存在
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+            # 编译工具的输出目录（在项目目录下）
+            self.temp_output_dir = self.project_path.parent / "output"
+            
+            # 确保所有目录存在
+            self.final_output_dir.mkdir(parents=True, exist_ok=True)
             
             logging.info(f"Project path: {self.project_path}")
-            logging.info(f"Output directory: {self.output_dir}")
+            logging.info(f"Final output directory: {self.final_output_dir}")
+            logging.info(f"Temporary output directory: {self.temp_output_dir}")
         except Exception as e:
             logging.error(f"Initialization failed: {str(e)}", exc_info=True)
             raise
@@ -51,18 +55,18 @@ class WatchfaceCompiler:
                 
             # 2. 准备输出文件名
             output_filename = self.project_path.stem + ".face"
-            output_file = self.output_dir / output_filename
+            final_output_file = self.final_output_dir / output_filename
             
             # 3. 运行编译工具
             if not self._run_compile_tool(output_filename):
                 return False
                 
             # 4. 移动输出文件
-            if not self._move_output_file(output_filename, output_file):
+            if not self._move_output_file(output_filename, final_output_file):
                 return False
                 
             # 5. 设置表盘ID
-            return self._set_watchface_id(output_file)
+            return self._set_watchface_id(final_output_file)
             
         except Exception as e:
             logging.error(f"Compilation error: {str(e)}", exc_info=True)
@@ -85,11 +89,11 @@ class WatchfaceCompiler:
     def _run_compile_tool(self, output_filename):
         """运行编译工具"""
         try:
-            # 编译工具路径（根目录）
-            compile_tool = pathlib.Path.cwd() / "compile.exe"
+            # 编译工具路径（相对于脚本位置）
+            compile_tool = pathlib.Path(__file__).parent / "compile.exe"
             
             if not compile_tool.exists():
-                logging.error("Compiler tool not found")
+                logging.error(f"Compiler tool not found at: {compile_tool}")
                 return False
             
             # 准备命令参数
@@ -97,17 +101,16 @@ class WatchfaceCompiler:
                 str(compile_tool),
                 "-b",
                 str(self.project_path),
-                "output",
+                "output",  # 编译工具会在项目目录下创建output子目录
                 output_filename,
                 "1461256429"
             ]
             
             logging.info(f"Executing command: {' '.join(cmd)}")
             
-            # 创建输出目录
-            output_dir = self.project_path.parent / "output"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Created output directory: {output_dir}")
+            # 确保临时输出目录存在
+            self.temp_output_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Created temporary output directory: {self.temp_output_dir}")
             
             # 设置环境变量优化内存
             env = os.environ.copy()
@@ -143,19 +146,19 @@ class WatchfaceCompiler:
             logging.error(f"Command execution error: {str(e)}")
             return False
 
-    def _move_output_file(self, output_filename, output_file):
-        """移动输出文件到目标目录"""
-        # 编译工具在项目目录生成输出文件
-        project_output_file = self.project_path.parent / "output" / output_filename
+    def _move_output_file(self, output_filename, final_output_file):
+        """移动输出文件到最终目录"""
+        # 编译工具生成的临时输出文件路径
+        temp_output_file = self.temp_output_dir / output_filename
         
-        if not project_output_file.exists():
-            logging.error(f"Output file not generated: {project_output_file}")
+        if not temp_output_file.exists():
+            logging.error(f"Output file not generated: {temp_output_file}")
             return False
             
         try:
-            # 移动文件到输出目录
-            shutil.move(str(project_output_file), str(output_file))
-            logging.info(f"Moved output file to: {output_file}")
+            # 移动文件到最终输出目录
+            shutil.move(str(temp_output_file), str(final_output_file))
+            logging.info(f"Moved output file to: {final_output_file}")
             return True
         except Exception as e:
             logging.error(f"Failed to move output file: {str(e)}")
@@ -182,15 +185,21 @@ class WatchfaceCompiler:
 
 if __name__ == "__main__":
     try:
-        # 使用固定路径
+        # 从环境变量获取路径（GitHub Actions兼容）
+        project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
+        output_dir = os.getenv("OUTPUT_DIR", "output")
+        
         compiler = WatchfaceCompiler(
-            project_path="project/fprj.fprj",
-            output_dir="output"
+            project_path=project_path,
+            output_dir=output_dir
         )
         
         if compiler.compile():
             print("Compile success")
+            sys.exit(0)
         else:
             print("Compile failed")
+            sys.exit(1)
     except Exception as e:
         print(f"Program error: {str(e)}")
+        sys.exit(1)
