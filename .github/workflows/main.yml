@@ -97,7 +97,8 @@ jobs:
           Write-Output "Renamed project file: $($fprjOriginal.FullName) -> $newPath"
           
           # 保存Base64图片到正确的路径
-          $bytes = [Convert]::FromBase64String((Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw))
+          $base64Content = Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw
+          $bytes = [Convert]::FromBase64String($base64Content)
           
           # 获取fprj文件所在目录
           $fprjDir = Split-Path $newPath -Parent
@@ -156,12 +157,12 @@ jobs:
               # 使用Python调整图片尺寸
               Write-Output "Resizing preview image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
               python -c "`
-      from PIL import Image; `
-      img = Image.open(r'$previewPath'); `
-      print(f'Original preview size: {img.width}x{img.height}'); `
-      img = img.resize(($expectedWidth, $expectedHeight)); `
-      img.save(r'$previewPath'); `
-      print(f'Resized preview to: {$expectedWidth}x{$expectedHeight}')"
+from PIL import Image; `
+img = Image.open(r'$previewPath'); `
+print(f'Original preview size: {img.width}x{img.height}'); `
+img = img.resize(($expectedWidth, $expectedHeight)); `
+img.save(r'$previewPath'); `
+print(f'Resized preview to: {$expectedWidth}x{$expectedHeight}')"
               
               return $true
             }
@@ -179,12 +180,12 @@ jobs:
               # 调整背景图尺寸
               Write-Output "Resizing background image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
               python -c "`
-      from PIL import Image; `
-      img = Image.open(r'$backgroundPath'); `
-      print(f'Original background size: {img.width}x{img.height}'); `
-      img = img.resize(($expectedWidth, $expectedHeight)); `
-      img.save(r'$backgroundPath'); `
-      print(f'Resized background to: {$expectedWidth}x{$expectedHeight}')"
+from PIL import Image; `
+img = Image.open(r'$backgroundPath'); `
+print(f'Original background size: {img.width}x{img.height}'); `
+img = img.resize(($expectedWidth, $expectedHeight)); `
+img.save(r'$backgroundPath'); `
+print(f'Resized background to: {$expectedWidth}x{$expectedHeight}')"
               
               return $true
             }
