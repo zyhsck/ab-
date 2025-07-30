@@ -156,12 +156,12 @@ jobs:
               # 使用Python调整图片尺寸
               Write-Output "Resizing preview image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
               python -c "`
-                from PIL import Image; `
-                img = Image.open(r'$previewPath'); `
-                print(f'Original preview size: {img.width}x{img.height}'); `
-                img = img.resize(($expectedWidth, $expectedHeight)); `
-                img.save(r'$previewPath'); `
-                print(f'Resized preview to: {$expectedWidth}x{$expectedHeight}')"
+      from PIL import Image; `
+      img = Image.open(r'$previewPath'); `
+      print(f'Original preview size: {img.width}x{img.height}'); `
+      img = img.resize(($expectedWidth, $expectedHeight)); `
+      img.save(r'$previewPath'); `
+      print(f'Resized preview to: {$expectedWidth}x{$expectedHeight}')"
               
               return $true
             }
@@ -172,20 +172,19 @@ jobs:
               $expectedWidth = $Matches[3]
               $expectedHeight = $Matches[4]
               
-              # 获取背景图路径 - 修复这里
-              # 使用 PowerShell 命令获取父目录
+              # 获取背景图路径
               $fprjPath = "${{ steps.prepare-project.outputs.fprj_path }}"
               $backgroundPath = Join-Path (Split-Path $fprjPath -Parent) "images\pic.png"
               
               # 调整背景图尺寸
               Write-Output "Resizing background image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
               python -c "`
-                from PIL import Image; `
-                img = Image.open(r'$backgroundPath'); `
-                print(f'Original background size: {img.width}x{img.height}'); `
-                img = img.resize(($expectedWidth, $expectedHeight)); `
-                img.save(r'$backgroundPath'); `
-                print(f'Resized background to: {$expectedWidth}x{$expectedHeight}')"
+      from PIL import Image; `
+      img = Image.open(r'$backgroundPath'); `
+      print(f'Original background size: {img.width}x{img.height}'); `
+      img = img.resize(($expectedWidth, $expectedHeight)); `
+      img.save(r'$backgroundPath'); `
+      print(f'Resized background to: {$expectedWidth}x{$expectedHeight}')"
               
               return $true
             }
@@ -237,7 +236,7 @@ jobs:
           # 最终失败处理
           Write-Output "Compilation failed after retry attempts"
           exit 1
-      
+            
       # 7. Verify output
       - name: Verify Output File
         id: verify-output
