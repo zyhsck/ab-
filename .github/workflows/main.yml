@@ -60,7 +60,7 @@ jobs:
           New-Item -Type Directory -Path $projectDir -Force
           $sourceTemplateDir = Split-Path $modelPath -Parent
           
-          # 递归复制所有文件和文件夹，保持相对路径
+          # 递归复制所有文件和文件夹
           $filesCopied = 0
           $directories = Get-ChildItem -Path $sourceTemplateDir -Recurse
           foreach ($item in $directories) {
@@ -68,19 +68,15 @@ jobs:
               $targetPath = Join-Path $projectDir $relativePath
               
               if ($item.PSIsContainer) {
-                  New-Item -ItemType Directory -Path $targetPath -Force -ErrorAction SilentlyContinue | Out-Null
+                  New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
               } else {
-                  try {
-                      Copy-Item -Path $item.FullName -Destination $targetPath -Force -ErrorAction Stop
-                      $filesCopied++
-                  } catch {
-                      Write-Warning "Failed to copy $($item.Name): $_"
-                  }
+                  Copy-Item -Path $item.FullName -Destination $targetPath -Force
+                  $filesCopied++
               }
           }
           Write-Output "Copied $filesCopied files to project directory"
           
-          # 查找FPRJ文件（修复了查找逻辑）
+          # 查找FPRJ文件
           $fprjFiles = @(Get-ChildItem -Path $projectDir -Filter "*.fprj" -Recurse)
           Write-Output "Found $($fprjFiles.Count) FPRJ files in project directory"
           
@@ -89,7 +85,7 @@ jobs:
           tree $projectDir /F | Out-String -Width 1024
           
           if ($fprjFiles.Count -eq 0) {
-              Write-Error "No FPRJ file found in project directory. Please check that the model path ($modelPath) contains a .fprj file."
+              Write-Error "No FPRJ file found in project directory."
               exit 1
           }
           
@@ -103,26 +99,22 @@ jobs:
           # 保存Base64图片到正确的路径
           $bytes = [Convert]::FromBase64String((Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw))
           
-          # 查找原始的pic.png位置
-          $picFiles = @(Get-ChildItem $projectDir -Filter "pic.png" -Recurse)
-          if ($picFiles.Count -eq 0) {
-              Write-Warning "No pic.png found in project directory. Creating one in root directory."
-              $picPath = Join-Path $projectDir "pic.png"
-              [IO.File]::WriteAllBytes($picPath, $bytes)
-          } else {
-              $picPath = $picFiles[0].FullName
-              [IO.File]::WriteAllBytes($picPath, $bytes)
-          }
-          Write-Output "Saved background image to: $picPath"
+          # 获取fprj文件所在目录
+          $fprjDir = Split-Path $newPath -Parent
           
-          # 创建预览图
-          $preFiles = @(Get-ChildItem $projectDir -Filter "pre.png" -Recurse)
-          if ($preFiles.Count -eq 0) {
-              $prePath = Join-Path $projectDir "pre.png"
-          } else {
-              $prePath = $preFiles[0].FullName
-          }
+          # 创建images目录（如果不存在）
+          $imagesDir = Join-Path $fprjDir "images"
+          New-Item -ItemType Directory -Path $imagesDir -Force
+          
+          # 保存背景图
+          $picPath = Join-Path $imagesDir "pic.png"
+          [IO.File]::WriteAllBytes($picPath, $bytes)
+          
+          # 保存预览图
+          $prePath = Join-Path $imagesDir "pre.png"
           Copy-Item $picPath $prePath -Force
+          
+          Write-Output "Saved background image to: $picPath"
           Write-Output "Saved preview image to: $prePath"
           
           # 创建输出目录
