@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <FaceProject DeviceType="367">
     <Screen Title="相册表盘PRO" Bitmap="pic.png">
-        <Widget Shape="30" Name="Image" X="0" Y="0" Width="128" Height="128" Alpha="255" Visible_Src="0" Bitmap="pic.png" />
+        <Widget Shape="30" Name="Image" X="0" Y="0" Width="336" Height="480" Alpha="255" Visible_Src="0" Bitmap="pic.png" />
         <Widget Shape="1007" Name="TimeHourDisplay" X="45" Y="157" Width="96" Height="48" Alpha="255" Alignment="0" Spacing="0" Blanking="0" Visible_Src="0" BitmapList="0.png|1.png|2.png|3.png|4.png|5.png|6.png|7.png|8.png|9.png|-.png" />
         <Widget Shape="1007" Name="TimeHourDisplay0" X="35" Y="53" Width="96" Height="48" Alpha="255" Alignment="0" Spacing="0" Blanking="0" Visible_Src="0" BitmapList="0.png|1.png|2.png|3.png|4.png|5.png|6.png|7.png|8.png|9.png|-.png" />
         <Widget Shape="30" Name="Image0" X="133" Y="53" Width="48" Height="48" Alpha="255" Visible_Src="0" Bitmap="char_58.png" />
