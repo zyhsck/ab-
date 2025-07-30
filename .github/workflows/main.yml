@@ -124,11 +124,13 @@ jobs:
           echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
           echo "fprj_path=$newPath" >> $env:GITHUB_OUTPUT
           echo "preview_path=$prePath" >> $env:GITHUB_OUTPUT
+      
       # 5. Set up Python with Pillow
       - name: Set up Python 3.10 and Pillow
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+      
       - name: Install Pillow for image resizing
         run: pip install Pillow
 
@@ -152,6 +154,7 @@ jobs:
               $previewPath = "${{ steps.prepare-project.outputs.preview_path }}"
               
               # 使用Python调整图片尺寸
+              Write-Output "Resizing preview image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
               python -c "`
                 from PIL import Image; `
                 img = Image.open(r'$previewPath'); `
@@ -173,6 +176,7 @@ jobs:
               $backgroundPath = "${{ steps.prepare-project.outputs.fprj_path | Split-Path -Parent }}\images\pic.png"
               
               # 调整背景图尺寸
+              Write-Output "Resizing background image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
               python -c "`
                 from PIL import Image; `
                 img = Image.open(r'$backgroundPath'); `
@@ -188,7 +192,7 @@ jobs:
             $missingPattern = "unable to open image '(.+)'"
             if ($errorOutput -match $missingPattern) {
               $missingFile = $Matches[1]
-              echo "Creating placeholder for missing file: $missingFile"
+              Write-Output "Creating placeholder for missing file: $missingFile"
               
               # 创建空文件占位符
               New-Item -Path $missingFile -ItemType File -Force | Out-Null
@@ -200,34 +204,38 @@ jobs:
           }
           
           # 首次尝试编译
-          echo "First compilation attempt..."
+          Write-Output "First compilation attempt..."
           $output = python compile_watchface.py 2>&1 | Out-String
           $exitCode = $LASTEXITCODE
           
           if ($exitCode -eq 0) {
-            echo "Compilation succeeded on first attempt"
+            Write-Output "Compilation succeeded on first attempt"
             exit 0
           }
           
-          echo "Compilation output:"
-          echo $output
+          Write-Output "Compilation output:"
+          Write-Output $output
           
           # 尝试处理错误
           if (Handle-Errors $output) {
             # 重新编译
-            echo "Retrying compilation after fixing errors..."
-            python compile_watchface.py
+            Write-Output "Retrying compilation after fixing errors..."
+            $output = python compile_watchface.py 2>&1 | Out-String
             $exitCode = $LASTEXITCODE
             
             if ($exitCode -eq 0) {
-              echo "Compilation succeeded after fixes"
+              Write-Output "Compilation succeeded after fixes"
               exit 0
+            } else {
+              Write-Output "Compilation failed after fixes. Output:"
+              Write-Output $output
             }
           }
           
           # 最终失败处理
-          echo "Compilation failed after retry attempts"
+          Write-Output "Compilation failed after retry attempts"
           exit 1
+      
       # 7. Verify output
       - name: Verify Output File
         id: verify-output
