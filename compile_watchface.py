@@ -1,241 +1,205 @@
-name: Watch Face Generator with Auto-Cleanup and Preview Fix
+import os
+import sys
+import io
+import logging
+import pathlib
+import shutil
+import subprocess
+from binary import WatchfaceBinary
 
-on:
-  repository_dispatch:
-    types: [generate_watchface]
-  workflow_dispatch:
-    inputs:
-      input_json:
-        description: 'JSON containing model path and image Base64'
-        required: true
+# 强制UTF-8编码
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-jobs:
-  generate:
-    runs-on: windows-latest
-    permissions:
-      contents: write
-      
-    steps:
-      # 1. Checkout code
-      - name: Checkout repository
-        uses: actions/checkout@v4
+# 配置日志系统
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 
-      # 2. Increase virtual memory
-      - name: Increase virtual memory to 16GB
-        run: |
-          wmic computersystem set AutomaticManagedPagefile=False
-          wmic pagefileset create name="C:\pagefile.sys"
-          wmic pagefileset where name="C:\pagefile.sys" set InitialSize=16384,MaximumSize=16384
-          wmic pagefileset list brief
-          echo "Virtual memory increased to 16GB"
-
-      # 3. Process input data
-      - name: Parse input JSON
-        id: parse-input
-        run: |
-          $inputData = if ('${{ github.event_name }}' -eq 'repository_dispatch') {
-            '${{ toJson(github.event.client_payload.input_json) }}'
-          } else {
-            '${{ toJson(github.event.inputs.input_json) }}'
-          }
-          
-          $jsonInput = $inputData | ConvertFrom-Json
-          $jsonInput.model | Out-File "$env:RUNNER_TEMP\model_path.txt"
-          $jsonInput.file | Out-File "$env:RUNNER_TEMP\image_base64.txt" -NoNewline
-          
-          echo "model_path_file=$env:RUNNER_TEMP\model_path.txt" >> $env:GITHUB_OUTPUT
-          echo "base64_file=$env:RUNNER_TEMP\image_base64.txt" >> $env:GITHUB_OUTPUT
-
-      # 4. Prepare project files
-      - name: Prepare project directory
-        id: prepare-project
-        run: |
-          # 设置项目目录路径
-          $projectDir = "project"
-          $fprjFile = "fprj.fprj"
-          
-          # 复制模型到项目目录
-          $modelPath = Get-Content "$env:RUNNER_TEMP\model_path.txt"
-          New-Item -Type Directory -Path $projectDir -Force
-          Copy-Item "$(Split-Path $modelPath -Parent)\*" $projectDir -Recurse
-          
-          # 重命名FPRJ文件
-          $fprjOriginal = Get-ChildItem $projectDir -Filter "*.fprj" | Select-Object -First 1
-          if ($fprjOriginal) {
-              Rename-Item $fprjOriginal.FullName (Join-Path $projectDir $fprjFile) -Force
-          } else {
-              Write-Error "No FPRJ file found"
-              exit 1
-          }
-          
-          # 保存Base64图片到项目目录
-          $bytes = [Convert]::FromBase64String((Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw))
-          $watchfacePicPath = Join-Path $projectDir "pic.png"
-          [IO.File]::WriteAllBytes($watchfacePicPath, $bytes)
-          
-          # 同时复制一份作为预览图（pre.png）
-          $previewPath = Join-Path $projectDir "pre.png"
-          Copy-Item $watchfacePicPath $previewPath -Force
-          
-          # 创建输出目录
-          New-Item -Type Directory -Path "$projectDir\output" -Force
-          
-          # 记录项目路径
-          echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
-          echo "fprj_path=$(Join-Path $projectDir $fprjFile)" >> $env:GITHUB_OUTPUT
-          echo "preview_path=$previewPath" >> $env:GITHUB_OUTPUT
-
-      # 5. Set up Python with Pillow
-      - name: Set up Python 3.10 and Pillow
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - name: Install Pillow for image resizing
-        run: pip install Pillow
-
-      # 6. Run compilation script with error handling
-      - name: Compile Watch Face (with retry)
-        id: compile-watchface
-        env:
-          PROJECT_PATH: "${{ steps.prepare-project.outputs.fprj_path }}"
-          OUTPUT_DIR: "${{ github.workspace }}/output"
-        run: |
-          # 错误处理函数
-          function Handle-PreviewError {
-            param($errorOutput)
+class WatchfaceCompiler:
+    def __init__(self, project_path, output_dir):
+        """
+        初始化编译器
+        :param project_path: 项目文件路径(.fprj)
+        :param output_dir: 最终输出目录路径
+        """
+        try:
+            # 使用pathlib处理路径
+            self.project_path = pathlib.Path(project_path).resolve()
+            self.final_output_dir = pathlib.Path(output_dir).resolve()
             
-            # 检查是否是预览尺寸错误
-            if ($errorOutput -match 'Preview has wrong size: (\d+)x(\d+), expected: (\d+)x(\d+)') {
-              $expectedWidth = $Matches[3]
-              $expectedHeight = $Matches[4]
-              
-              # 获取预览图路径
-              $previewPath = "${{ steps.prepare-project.outputs.preview_path }}"
-              
-              # 使用Python调整图片尺寸
-              python -c "`
-                from PIL import Image; `
-                img = Image.open(r'$previewPath'); `
-                img = img.resize(($expectedWidth, $expectedHeight)); `
-                img.save(r'$previewPath'); `
-                print(f'Resized preview to {expectedWidth}x{expectedHeight}')"
+            # 编译工具的输出目录（在项目目录下）
+            self.temp_output_dir = self.project_path.parent / "output"
+            
+            # 确保所有目录存在
+            self.final_output_dir.mkdir(parents=True, exist_ok=True)
+            
+            logging.info(f"Project path: {self.project_path}")
+            logging.info(f"Final output directory: {self.final_output_dir}")
+            logging.info(f"Temporary output directory: {self.temp_output_dir}")
+        except Exception as e:
+            logging.error(f"Initialization failed: {str(e)}", exc_info=True)
+            raise
+
+    def compile(self):
+        """
+        编译主流程
+        :return: 成功返回True，失败返回False
+        """
+        try:
+            # 1. 验证项目文件
+            if not self._validate_project_file():
+                return False
                 
-              return $true
-            }
-            return $false
-          }
-          
-          # 首次尝试编译
-          echo "First compilation attempt..."
-          python compile_watchface.py 2>&1 | Tee-Object -Variable output
-          if ($LASTEXITCODE -eq 0) {
-            echo "Compilation succeeded on first attempt"
-            exit 0
-          }
-          
-          # 尝试处理预览尺寸错误
-          if (Handle-PreviewError $output) {
-            # 重新编译
-            echo "Retrying compilation after resizing preview..."
-            python compile_watchface.py
-            if ($LASTEXITCODE -eq 0) {
-              echo "Compilation succeeded after preview fix"
-              exit 0
-            } else {
-              # 第二次编译失败
-              echo "Compilation failed even after preview fix"
-              exit 1
-            }
-          }
-          
-          # 无法识别的错误类型
-          echo "Compilation failed for unknown reasons"
-          exit 1
-
-      # 7. Verify output
-      - name: Verify Output File
-        id: verify-output
-        run: |
-          $outputDir = "${{ github.workspace }}/output"
-          $file = Get-ChildItem $outputDir -Filter "*.face"
-          if ($file) {
-              echo "face_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
-          } else {
-              Write-Error "Output file not found"
-              exit 1
-          }
-
-      # 8. Create Release
-      - name: Create Release
-        id: create-release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          tag_name: "face-${{ github.run_id }}"
-          files: ${{ steps.verify-output.outputs.face_file }}
-          draft: false
-          prerelease: false
-
-      # 9. Pass release data
-      - name: Store Release Data
-        id: pass-data
-        run: |
-          echo "release_id=${{ steps.create-release.outputs.id }}" >> $env:GITHUB_OUTPUT
-          echo "release_tag=face-${{ github.run_id }}" >> $env:GITHUB_OUTPUT
-
-    outputs:
-      release_id: ${{ steps.pass-data.outputs.release_id }}
-      release_tag: ${{ steps.pass-data.outputs.release_tag }}
-
-  delete_release:
-    name: Auto-Delete Release
-    needs: generate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      # 1. Wait 10 minutes (using native sleep)
-      - name: Wait for 10 minutes
-        run: sleep 600
-      
-      # 2. Delete release and tag
-      - name: Delete Release Assets
-        uses: actions/github-script@v6
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          script: |
-            const { release_id, release_tag } = {
-              release_id: ${{ needs.generate.outputs.release_id }},
-              release_tag: '${{ needs.generate.outputs.release_tag }}'
-            };
+            # 2. 准备输出文件名
+            output_filename = self.project_path.stem + ".face"
+            final_output_file = self.final_output_dir / output_filename
             
-            if (!release_id || !release_tag) {
-              core.setFailed('Missing release information');
-              return;
-            }
+            # 3. 运行编译工具
+            if not self._run_compile_tool(output_filename):
+                return False
+                
+            # 4. 移动输出文件
+            if not self._move_output_file(output_filename, final_output_file):
+                return False
+                
+            # 5. 设置表盘ID
+            return self._set_watchface_id(final_output_file)
             
-            try {
-              // Delete release
-              await github.rest.repos.deleteRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: release_id
-              });
-              
-              // Delete tag
-              await github.rest.git.deleteRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `tags/${release_tag}`
-              });
-              
-              core.info(`Successfully deleted release ${release_id} and tag ${release_tag}`);
-            } catch (error) {
-              if (error.status === 404) {
-                core.warning('Release or tag not found (may have been already deleted)');
-              } else {
-                core.setFailed(`Deletion failed: ${error.message}`);
-              }
-            }
+        except Exception as e:
+            logging.error(f"Compilation error: {str(e)}", exc_info=True)
+            return False
+
+    def _validate_project_file(self):
+        """验证项目文件"""
+        if not self.project_path.exists():
+            logging.error(f"Project file not found: {self.project_path}")
+            return False
+            
+        file_size = os.path.getsize(self.project_path)
+        if file_size == 0:
+            logging.error(f"Project file is empty: {self.project_path}")
+            return False
+            
+        logging.info(f"Project file size: {file_size} bytes")
+        return True
+
+    def _run_compile_tool(self, output_filename):
+        """运行编译工具"""
+        try:
+            # 编译工具路径（相对于脚本位置）
+            compile_tool = pathlib.Path(__file__).parent / "compile.exe"
+            
+            if not compile_tool.exists():
+                logging.error(f"Compiler tool not found at: {compile_tool}")
+                return False
+            
+            # 准备命令参数
+            cmd = [
+                str(compile_tool),
+                "-b",
+                str(self.project_path),
+                "output",  # 编译工具会在项目目录下创建output子目录
+                output_filename,
+                "1461256429"
+            ]
+            
+            logging.info(f"Executing command: {' '.join(cmd)}")
+            
+            # 确保临时输出目录存在
+            self.temp_output_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Created temporary output directory: {self.temp_output_dir}")
+            
+            # 设置环境变量优化内存
+            env = os.environ.copy()
+            env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
+            env["COMPlus_gcServer"] = "1"  # 启用服务器GC
+            env["COMPlus_gcConcurrent"] = "1"  # 启用并发GC
+            
+            # 使用subprocess执行命令
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.project_path.parent),
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                shell=True,
+                env=env
+            )
+            
+            # 记录输出
+            if result.stdout:
+                logging.info(f"Compiler output:\n{result.stdout}")
+            if result.stderr:
+                logging.warning(f"Compiler warnings:\n{result.stderr}")
+                
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Compilation failed (exit code {e.returncode}):\n{e.stderr}")
+            return False
+        except Exception as e:
+            logging.error(f"Command execution error: {str(e)}")
+            return False
+
+    def _move_output_file(self, output_filename, final_output_file):
+        """移动输出文件到最终目录"""
+        # 编译工具生成的临时输出文件路径
+        temp_output_file = self.temp_output_dir / output_filename
+        
+        if not temp_output_file.exists():
+            logging.error(f"Output file not generated: {temp_output_file}")
+            return False
+            
+        try:
+            # 移动文件到最终输出目录
+            shutil.move(str(temp_output_file), str(final_output_file))
+            logging.info(f"Moved output file to: {final_output_file}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to move output file: {str(e)}")
+            return False
+
+    def _set_watchface_id(self, output_file):
+        """设置表盘ID"""
+        try:
+            # 检查文件大小
+            file_size = os.path.getsize(output_file)
+            if file_size < 9:
+                logging.error(f"File too small to set ID: {file_size} bytes")
+                return False
+                
+            # 设置ID
+            binary = WatchfaceBinary(str(output_file))
+            binary.setId("123456789")
+            logging.info(f"Set watch face ID: 123456789")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to set watch face ID: {str(e)}")
+            return False
+
+
+if __name__ == "__main__":
+    try:
+        # 从环境变量获取路径（GitHub Actions兼容）
+        project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
+        output_dir = os.getenv("OUTPUT_DIR", "output")
+        
+        compiler = WatchfaceCompiler(
+            project_path=project_path,
+            output_dir=output_dir
+        )
+        
+        if compiler.compile():
+            print("Compile success")
+            sys.exit(0)
+        else:
+            print("Compile failed")
+            sys.exit(1)
+    except Exception as e:
+        print(f"Program error: {str(e)}")
+        sys.exit(1)
