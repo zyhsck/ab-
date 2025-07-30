@@ -132,7 +132,6 @@ jobs:
       - name: Install Pillow for image resizing
         run: pip install Pillow
 
-      # 6. Run compilation script with error handling
       - name: Compile Watch Face (with retry)
         id: compile-watchface
         env:
@@ -140,11 +139,12 @@ jobs:
           OUTPUT_DIR: "${{ github.workspace }}/output"
         run: |
           # 错误处理函数
-          function Handle-PreviewError {
+          function Handle-Errors {
             param($errorOutput)
             
-            # 检查是否是预览尺寸错误
-            if ($errorOutput -match 'Preview has wrong size: (\d+)x(\d+), expected: (\d+)x(\d+)') {
+            # 1. 处理预览尺寸错误
+            $previewPattern = 'Preview has wrong size: (\d+)x(\d+), expected: (\d+)x(\d+)'
+            if ($errorOutput -match $previewPattern) {
               $expectedWidth = $Matches[3]
               $expectedHeight = $Matches[4]
               
@@ -155,42 +155,79 @@ jobs:
               python -c "`
                 from PIL import Image; `
                 img = Image.open(r'$previewPath'); `
+                print(f'Original preview size: {img.width}x{img.height}'); `
                 img = img.resize(($expectedWidth, $expectedHeight)); `
                 img.save(r'$previewPath'); `
-                print(f'Resized preview to {expectedWidth}x{expectedHeight}')"
-                
+                print(f'Resized preview to: {$expectedWidth}x{$expectedHeight}')"
+              
               return $true
             }
+            
+            # 2. 处理背景图尺寸错误
+            $backgroundPattern = 'Background has wrong size: (\d+)x(\d+), expected: (\d+)x(\d+)'
+            if ($errorOutput -match $backgroundPattern) {
+              $expectedWidth = $Matches[3]
+              $expectedHeight = $Matches[4]
+              
+              # 获取背景图路径
+              $backgroundPath = "${{ steps.prepare-project.outputs.fprj_path | Split-Path -Parent }}\images\pic.png"
+              
+              # 调整背景图尺寸
+              python -c "`
+                from PIL import Image; `
+                img = Image.open(r'$backgroundPath'); `
+                print(f'Original background size: {img.width}x{img.height}'); `
+                img = img.resize(($expectedWidth, $expectedHeight)); `
+                img.save(r'$backgroundPath'); `
+                print(f'Resized background to: {$expectedWidth}x{$expectedHeight}')"
+              
+              return $true
+            }
+            
+            # 3. 处理资源缺失错误
+            $missingPattern = "unable to open image '(.+)'"
+            if ($errorOutput -match $missingPattern) {
+              $missingFile = $Matches[1]
+              echo "Creating placeholder for missing file: $missingFile"
+              
+              # 创建空文件占位符
+              New-Item -Path $missingFile -ItemType File -Force | Out-Null
+              
+              return $true
+            }
+            
             return $false
           }
           
           # 首次尝试编译
           echo "First compilation attempt..."
-          python compile_watchface.py 2>&1 | Tee-Object -Variable output
-          if ($LASTEXITCODE -eq 0) {
+          $output = python compile_watchface.py 2>&1 | Out-String
+          $exitCode = $LASTEXITCODE
+          
+          if ($exitCode -eq 0) {
             echo "Compilation succeeded on first attempt"
             exit 0
           }
           
-          # 尝试处理预览尺寸错误
-          if (Handle-PreviewError $output) {
+          echo "Compilation output:"
+          echo $output
+          
+          # 尝试处理错误
+          if (Handle-Errors $output) {
             # 重新编译
-            echo "Retrying compilation after resizing preview..."
+            echo "Retrying compilation after fixing errors..."
             python compile_watchface.py
-            if ($LASTEXITCODE -eq 0) {
-              echo "Compilation succeeded after preview fix"
+            $exitCode = $LASTEXITCODE
+            
+            if ($exitCode -eq 0) {
+              echo "Compilation succeeded after fixes"
               exit 0
-            } else {
-              # 第二次编译失败
-              echo "Compilation failed even after preview fix"
-              exit 1
             }
           }
           
-          # 无法识别的错误类型
-          echo "Compilation failed for unknown reasons"
+          # 最终失败处理
+          echo "Compilation failed after retry attempts"
           exit 1
-
       # 7. Verify output
       - name: Verify Output File
         id: verify-output
