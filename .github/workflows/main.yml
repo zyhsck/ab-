@@ -46,7 +46,6 @@ jobs:
           echo "model_path_file=$env:RUNNER_TEMP\model_path.txt" >> $env:GITHUB_OUTPUT
           echo "base64_file=$env:RUNNER_TEMP\image_base64.txt" >> $env:GITHUB_OUTPUT
 
-      # 4. Prepare project files
       - name: Prepare project directory
         id: prepare-project
         run: |
@@ -59,10 +58,15 @@ jobs:
           New-Item -Type Directory -Path $projectDir -Force
           Copy-Item "$(Split-Path $modelPath -Parent)\*" $projectDir -Recurse
           
-          # 重命名FPRJ文件
+          # 重命名FPRJ文件 (修复了重命名语法)
           $fprjOriginal = Get-ChildItem $projectDir -Filter "*.fprj" | Select-Object -First 1
           if ($fprjOriginal) {
-              Rename-Item $fprjOriginal.FullName (Join-Path $projectDir $fprjFile) -Force
+              # 使用 -NewName 参数而不是路径连接
+              Rename-Item -Path $fprjOriginal.FullName -NewName $fprjFile -Force
+              
+              # 更新路径变量
+              $fprjPath = Join-Path $projectDir $fprjFile
+              Write-Output "Successfully renamed project file to: $fprjPath"
           } else {
               Write-Error "No FPRJ file found"
               exit 1
@@ -82,7 +86,7 @@ jobs:
           
           # 记录项目路径
           echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
-          echo "fprj_path=$(Join-Path $projectDir $fprjFile)" >> $env:GITHUB_OUTPUT
+          echo "fprj_path=$fprjPath" >> $env:GITHUB_OUTPUT
           echo "preview_path=$previewPath" >> $env:GITHUB_OUTPUT
 
       # 5. Set up Python with Pillow
