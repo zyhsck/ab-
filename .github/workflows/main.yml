@@ -53,10 +53,24 @@ jobs:
           $projectDir = "project"
           $fprjFile = "fprj.fprj"
           
-          # 复制模型到项目目录
+          # 复制模型到项目目录（保持原始结构）
           $modelPath = Get-Content "$env:RUNNER_TEMP\model_path.txt"
           New-Item -Type Directory -Path $projectDir -Force
-          Copy-Item "$(Split-Path $modelPath -Parent)\*" $projectDir -Recurse
+          
+          # 获取源模板目录
+          $sourceTemplateDir = Split-Path $modelPath -Parent
+          
+          # 递归复制整个模板目录，保持相对路径
+          Get-ChildItem -Path $sourceTemplateDir -Recurse | ForEach-Object {
+              $relativePath = $_.FullName.Substring($sourceTemplateDir.Length + 1)
+              $targetPath = Join-Path $projectDir $relativePath
+              
+              if ($_.PSIsContainer) {
+                  New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+              } else {
+                  Copy-Item -Path $_.FullName -Destination $targetPath -Force
+              }
+          }
           
           # 重命名FPRJ文件
           $fprjOriginal = Get-ChildItem $projectDir -Filter "*.fprj" | Select-Object -First 1
@@ -69,24 +83,52 @@ jobs:
               exit 1
           }
           
-          # 保存Base64图片到项目根目录
+          # 保存Base64图片到正确的路径
           $bytes = [Convert]::FromBase64String((Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw))
           
-          # 保存背景图
-          $watchfacePicPath = Join-Path $projectDir "pic.png"
-          [IO.File]::WriteAllBytes($watchfacePicPath, $bytes)
+          # 1. 获取原始pic.png的位置
+          $originalPicPath = Get-ChildItem $projectDir -Filter "pic.png" -Recurse | Select-Object -First 1
           
-          # 保存预览图
-          $previewPath = Join-Path $projectDir "pre.png"
-          Copy-Item $watchfacePicPath $previewPath -Force
+          if ($originalPicPath) {
+              # 2. 保存图片到原始位置
+              [IO.File]::WriteAllBytes($originalPicPath.FullName, $bytes)
+              
+              # 3. 复制预览图到原始位置
+              $originalPreviewPath = Get-ChildItem $projectDir -Filter "pre.png" -Recurse | Select-Object -First 1
+              if ($originalPreviewPath) {
+                  Copy-Item $originalPicPath.FullName $originalPreviewPath.FullName -Force
+              } else {
+                  # 如果pre.png不存在，则使用pic.png相同路径创建
+                  $newPreviewPath = Join-Path (Split-Path $originalPicPath.FullName -Parent) "pre.png"
+                  Copy-Item $originalPicPath.FullName $newPreviewPath -Force
+                  $originalPreviewPath = Get-Item $newPreviewPath
+              }
+              
+              Write-Output "Replaced background image at: $($originalPicPath.FullName)"
+              Write-Output "Replaced preview image at: $($originalPreviewPath.FullName)"
+              
+              # 记录路径变量
+              echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
+              echo "fprj_path=$fprjPath" >> $env:GITHUB_OUTPUT
+              echo "preview_path=$($originalPreviewPath.FullName)" >> $env:GITHUB_OUTPUT
+          } else {
+              # 如果模板中没有pic.png，则创建在项目根目录
+              $newPicPath = Join-Path $projectDir "pic.png"
+              [IO.File]::WriteAllBytes($newPicPath, $bytes)
+              $newPreviewPath = Join-Path $projectDir "pre.png"
+              Copy-Item $newPicPath $newPreviewPath -Force
+              
+              Write-Output "Created background image at: $newPicPath"
+              Write-Output "Created preview image at: $newPreviewPath"
+              
+              # 记录路径变量
+              echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
+              echo "fprj_path=$fprjPath" >> $env:GITHUB_OUTPUT
+              echo "preview_path=$newPreviewPath" >> $env:GITHUB_OUTPUT
+          }
           
           # 创建输出目录
           New-Item -Type Directory -Path "$projectDir\output" -Force
-          
-          # 记录项目路径
-          echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
-          echo "fprj_path=$fprjPath" >> $env:GITHUB_OUTPUT
-          echo "preview_path=$previewPath" >> $env:GITHUB_OUTPUT
 
       # 5. Set up Python with Pillow
       - name: Set up Python 3.10 and Pillow
