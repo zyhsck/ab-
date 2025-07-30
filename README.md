@@ -13,6 +13,7 @@
 
 3. **上传路径规范**：
    - 建议路径格式：`watchs/[手表型号]/[表盘名称]/[作者名称].fprj`
+   - 或者`watchs/[手表型号]/[作者名称]/[表盘名称]/[表盘名称].fprj`
    - 示例：`watchs/GT4/Bubble_Watch/cool_author.fprj`
 
 ## 用户使用指南
