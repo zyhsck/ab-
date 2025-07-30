@@ -58,13 +58,10 @@ jobs:
           New-Item -Type Directory -Path $projectDir -Force
           Copy-Item "$(Split-Path $modelPath -Parent)\*" $projectDir -Recurse
           
-          # 重命名FPRJ文件 (修复了重命名语法)
+          # 重命名FPRJ文件
           $fprjOriginal = Get-ChildItem $projectDir -Filter "*.fprj" | Select-Object -First 1
           if ($fprjOriginal) {
-              # 使用 -NewName 参数而不是路径连接
               Rename-Item -Path $fprjOriginal.FullName -NewName $fprjFile -Force
-              
-              # 更新路径变量
               $fprjPath = Join-Path $projectDir $fprjFile
               Write-Output "Successfully renamed project file to: $fprjPath"
           } else {
@@ -72,12 +69,14 @@ jobs:
               exit 1
           }
           
-          # 保存Base64图片到项目目录
+          # 保存Base64图片到项目根目录
           $bytes = [Convert]::FromBase64String((Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw))
+          
+          # 保存背景图
           $watchfacePicPath = Join-Path $projectDir "pic.png"
           [IO.File]::WriteAllBytes($watchfacePicPath, $bytes)
           
-          # 同时复制一份作为预览图（pre.png）
+          # 保存预览图
           $previewPath = Join-Path $projectDir "pre.png"
           Copy-Item $watchfacePicPath $previewPath -Force
           
