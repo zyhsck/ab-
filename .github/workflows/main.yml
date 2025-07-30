@@ -118,8 +118,6 @@ jobs:
           
           # 保存预览图 - 使用复制而不是引用
           $prePath = Join-Path $imagesDir "pre.png"
-          
-          # 使用System.IO.File.Copy确保完整复制
           [System.IO.File]::Copy($picPath, $prePath, $true)
           
           Write-Output "Saved background image to: $picPath"
@@ -161,46 +159,9 @@ jobs:
               # 获取预览图路径
               $previewPath = "${{ steps.prepare-project.outputs.preview_path }}"
               
-              # 使用Python调整图片尺寸 - 更健壮的方法
+              # 使用Python调整图片尺寸
               Write-Output "Resizing preview image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
-              
-              # 创建临时Python脚本
-              $pythonScript = @"
-import os
-import time
-from PIL import Image
-
-def resize_image(path, width, height):
-    # 检查文件是否存在
-    if not os.path.exists(path):
-        print(f"Error: File not found - {path}")
-        return False
-    
-    # 尝试多次打开文件（解决文件锁定问题）
-    for attempt in range(5):
-        try:
-            img = Image.open(path)
-            print(f"Original preview size: {img.width}x{img.height}")
-            img = img.resize((width, height))
-            img.save(path)
-            print(f"Resized preview to: {width}x{height}")
-            return True
-        except Exception as e:
-            print(f"Attempt {attempt+1} failed: {str(e)}")
-            time.sleep(0.5)  # 等待0.5秒后重试
-    
-    print("All attempts failed to resize image")
-    return False
-
-resize_image(r'$previewPath', $expectedWidth, $expectedHeight)
-"@
-              
-              # 保存Python脚本
-              $scriptPath = Join-Path $env:TEMP "resize_image.py"
-              $pythonScript | Out-File $scriptPath -Encoding UTF8
-              
-              # 执行Python脚本
-              python $scriptPath
+              python -c "from PIL import Image; img = Image.open(r'$previewPath'); img = img.resize(($expectedWidth, $expectedHeight)); img.save(r'$previewPath')"
               
               return $true
             }
