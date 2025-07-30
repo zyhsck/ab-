@@ -172,8 +172,10 @@ jobs:
               $expectedWidth = $Matches[3]
               $expectedHeight = $Matches[4]
               
-              # 获取背景图路径
-              $backgroundPath = "${{ steps.prepare-project.outputs.fprj_path | Split-Path -Parent }}\images\pic.png"
+              # 获取背景图路径 - 修复这里
+              # 使用 PowerShell 命令获取父目录
+              $fprjPath = "${{ steps.prepare-project.outputs.fprj_path }}"
+              $backgroundPath = Join-Path (Split-Path $fprjPath -Parent) "images\pic.png"
               
               # 调整背景图尺寸
               Write-Output "Resizing background image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
