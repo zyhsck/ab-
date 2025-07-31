@@ -51,43 +51,38 @@ jobs:
         run: |
           # 设置项目目录路径
           $projectDir = "project"
-          $fprjFile = "fprj.fprj"
           
-          # 复制模型到项目目录
+          # 复制整个模型目录到项目目录（包含所有子目录和文件）
           $modelPath = Get-Content "$env:RUNNER_TEMP\model_path.txt"
-          New-Item -Type Directory -Path $projectDir -Force
-          Copy-Item "$(Split-Path $modelPath -Parent)\*" $projectDir -Recurse
+          $modelDir = [System.IO.Path]::GetDirectoryName($modelPath)
           
-          # 重命名FPRJ文件 (修复了重命名语法)
-          $fprjOriginal = Get-ChildItem $projectDir -Filter "*.fprj" | Select-Object -First 1
-          if ($fprjOriginal) {
-              # 使用 -NewName 参数而不是路径连接
-              Rename-Item -Path $fprjOriginal.FullName -NewName $fprjFile -Force
-              
-              # 更新路径变量
-              $fprjPath = Join-Path $projectDir $fprjFile
-              Write-Output "Successfully renamed project file to: $fprjPath"
-          } else {
-              Write-Error "No FPRJ file found"
+          # 创建项目目录并复制所有内容
+          New-Item -Type Directory -Path $projectDir -Force
+          Copy-Item -Path "$modelDir\*" -Destination $projectDir -Recurse -Force
+          
+          # 获取fprj文件路径（使用源文件名）
+          $modelFileName = [System.IO.Path]::GetFileName($modelPath)
+          $fprjPath = Join-Path $projectDir $modelFileName
+          
+          # 检查文件是否存在
+          if (-not (Test-Path $fprjPath)) {
+              Write-Error "FPRJ file not found after copy: $fprjPath"
               exit 1
           }
           
-          # 保存Base64图片到项目目录
+          # 保存Base64图片到项目目录的images子目录
           $bytes = [Convert]::FromBase64String((Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw))
-          $watchfacePicPath = Join-Path $projectDir "pic.png"
+          $imagesDir = Join-Path $projectDir "images"
+          New-Item -Type Directory -Path $imagesDir -Force
+          $watchfacePicPath = Join-Path $imagesDir "pic.png"
           [IO.File]::WriteAllBytes($watchfacePicPath, $bytes)
-          
-          # 同时复制一份作为预览图（pre.png）
-          $previewPath = Join-Path $projectDir "pre.png"
-          Copy-Item $watchfacePicPath $previewPath -Force
           
           # 创建输出目录
           New-Item -Type Directory -Path "$projectDir\output" -Force
           
-          # 记录项目路径
+          # 记录项目路径和fprj路径
           echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
           echo "fprj_path=$fprjPath" >> $env:GITHUB_OUTPUT
-          echo "preview_path=$previewPath" >> $env:GITHUB_OUTPUT
 
       # 5. Set up Python with Pillow
       - name: Set up Python 3.10 and Pillow
@@ -113,8 +108,8 @@ jobs:
               $expectedWidth = $Matches[3]
               $expectedHeight = $Matches[4]
               
-              # 获取预览图路径
-              $previewPath = "${{ steps.prepare-project.outputs.preview_path }}"
+              # 获取预览图路径（在images目录）
+              $previewPath = "${{ steps.prepare-project.outputs.project_path }}\images\pre.png"
               
               # 使用Python调整图片尺寸
               python -c "`
@@ -165,8 +160,15 @@ jobs:
           if ($file) {
               echo "face_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
           } else {
-              Write-Error "Output file not found"
-              exit 1
+            # 检查临时输出目录
+            $tempOutputDir = "${{ steps.prepare-project.outputs.project_path }}\output"
+            $file = Get-ChildItem $tempOutputDir -Filter "*.face"
+            if ($file) {
+                echo "face_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
+            } else {
+                Write-Error "Output file not found in $outputDir or $tempOutputDir"
+                exit 1
+            }
           }
 
       # 8. Create Release
@@ -199,7 +201,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      # 1. Wait 10 minutes (using native sleep)
+      # 1. Wait 10 minutes
       - name: Wait for 10 minutes
         run: sleep 600
       
