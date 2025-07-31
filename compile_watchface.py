@@ -59,7 +59,6 @@ class WatchfaceCompiler:
             logging.error(f"Initialization failed: {str(e)}", exc_info=True)
             raise
 
-    # 添加compile方法
     def compile(self):
         """
         编译主流程（带重试）
@@ -82,6 +81,11 @@ class WatchfaceCompiler:
                 # 尝试调整预览图尺寸
                 if self._fix_preview_size():
                     logging.info("Preview image resized. Retrying compilation...")
+                    
+                    # 关键修复：删除临时输出目录，确保重新编译
+                    if self.temp_output_dir.exists():
+                        shutil.rmtree(self.temp_output_dir)
+                        logging.info(f"Deleted temporary output directory: {self.temp_output_dir}")
                     
                     # 重试编译
                     if self._run_compile_tool(output_filename):
@@ -203,8 +207,14 @@ class WatchfaceCompiler:
             # 原子替换原文件
             os.replace(temp_path, self.preview_path)
             
-            logging.info("Preview image resized successfully")
-            return True
+            # 验证调整后的尺寸
+            img_after = Image.open(self.preview_path)
+            if img_after.size == expected_size:
+                logging.info(f"Verified preview size: {img_after.size}")
+                return True
+            else:
+                logging.error(f"Resize failed! Expected: {expected_size}, Actual: {img_after.size}")
+                return False
             
         except Exception as e:
             logging.error(f"Failed to resize preview image: {str(e)}")
