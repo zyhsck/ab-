@@ -107,13 +107,28 @@ jobs:
           $imagesDir = Join-Path $fprjDir "images"
           New-Item -ItemType Directory -Path $imagesDir -Force
           
-          # 保存背景图
+          # 保存背景图（使用可靠写入方式）
           $picPath = Join-Path $imagesDir "pic.png"
           [IO.File]::WriteAllBytes($picPath, $bytes)
           
-          # 保存预览图
+          # 添加完整性检查
+          Start-Sleep -Seconds 1
+          if ((Get-Item $picPath).Length -ne $bytes.Length) {
+              Write-Error "背景图片写入不完整，$($(Get-Item $picPath).Length) 字节 vs 预期 $($bytes.Length) 字节"
+              exit 1
+          }
+          
+          # 保存预览图（使用复制文件保证完整写入）
           $prePath = Join-Path $imagesDir "pre.png"
-          Copy-Item $picPath $prePath -Force
+          Start-Sleep -Milliseconds 500  # 确保文件系统刷新
+          Copy-Item -Path $picPath -Destination $prePath -Force
+          
+          # 检查预览图完整性
+          Start-Sleep -Seconds 1
+          if ((Get-Item $prePath).Length -ne (Get-Item $picPath).Length) {
+              Write-Error "预览图片复制失败，$($(Get-Item $prePath).Length) 字节 vs 原始 $($(Get-Item $picPath).Length) 字节"
+              exit 1
+          }
           
           Write-Output "Saved background image to: $picPath"
           Write-Output "Saved preview image to: $prePath"
@@ -141,6 +156,96 @@ jobs:
           PROJECT_PATH: "${{ steps.prepare-project.outputs.fprj_path }}"
           OUTPUT_DIR: "${{ github.workspace }}/output"
         run: |
+          # 带重试机制的图片调整函数
+          function Resize-ImageWithRetry {
+            param($path, $expectedWidth, $expectedHeight)
+            
+            $retryCount = 0
+            $maxRetries = 3
+            $success = $false
+            
+            while (-not $success -and $retryCount -lt $maxRetries) {
+                $retryCount++
+                Write-Output "Attempt #$retryCount to resize $path to ${expectedWidth}x${expectedHeight}"
+                
+                try {
+                    $output = python -c "
+import sys
+from PIL import Image
+import traceback
+import os
+import time
+
+# 检查文件是否被占用
+def is_file_locked(file_path):
+    try:
+        with open(file_path, 'a') as f:
+            pass
+        return False
+    except (IOError, OSError):
+        return True
+
+file_path = r'$path'
+if is_file_locked(file_path):
+    print(f'文件被占用，等待重试...')
+    time.sleep($retryCount * 0.5)  # 指数退避等待
+    
+try:
+    img = Image.open(file_path)
+    
+    # 验证文件是否完整
+    try:
+        img.load()
+    except OSError as e:
+        print(f'图像加载失败: {e}')
+        if 'truncated' in str(e):
+            print('文件可能被截断 - 需要重新写入')
+            with open(file_path, 'rb') as f:
+                content = f.read()
+                if len(content) < os.path.getsize(file_path):
+                    raise Exception('文件内容不完整')
+            raise
+        else:
+            raise
+    
+    # 调整图像尺寸
+    new_size = ($expectedWidth, $expectedHeight)
+    img = img.resize(new_size, Image.LANCZOS)
+    
+    # 临时文件写入
+    temp_path = file_path + '.tmp'
+    img.save(temp_path, 'PNG')
+    
+    # 原子替换原文件
+    if os.path.exists(file_path):
+        os.unlink(file_path)
+    os.rename(temp_path, file_path)
+    
+    print('图像调整成功')
+    sys.exit(0)
+    
+except Exception as e:
+    traceback.print_exc()
+    print(f'尝试 #{retryCount} 失败: {e}')
+    time.sleep($retryCount * 0.5)
+    sys.exit(1)
+"
+                    if ($LASTEXITCODE -eq 0) {
+                        $success = $true
+                        Write-Output "图像调整成功"
+                    } else {
+                        Write-Output "图片调整失败: $output"
+                        Start-Sleep -Seconds ($retryCount * 1)
+                    }
+                } catch {
+                    Write-Output "图片处理异常: $_"
+                    Start-Sleep -Seconds ($retryCount * 1)
+                }
+            }
+            
+            return $success
+          }
+          
           # 错误处理函数
           function Handle-Errors {
             param($errorOutput)
@@ -148,17 +253,34 @@ jobs:
             # 1. 处理预览尺寸错误
             $previewPattern = 'Preview has wrong size: (\d+)x(\d+), expected: (\d+)x(\d+)'
             if ($errorOutput -match $previewPattern) {
-              $expectedWidth = $Matches[3]
-              $expectedHeight = $Matches[4]
+              $expectedWidth = [int]$Matches[3]
+              $expectedHeight = [int]$Matches[4]
               
               # 获取预览图路径
               $previewPath = "${{ steps.prepare-project.outputs.preview_path }}"
               
-              # 使用Python调整图片尺寸
-              Write-Output "Resizing preview image from $($Matches[1])x$($Matches[2]) to $expectedWidth x $expectedHeight"
-              python -c "from PIL import Image; img = Image.open(r'$previewPath'); img = img.resize(($expectedWidth, $expectedHeight)); img.save(r'$previewPath')"
+              # 使用带重试的图片调整
+              $success = Resize-ImageWithRetry -path $previewPath -expectedWidth $expectedWidth -expectedHeight $expectedHeight
               
-              return $true
+              if (-not $success) {
+                  Write-Output "无法修复预览图片，即使经过多次重试"
+                  return $false
+              }
+              
+              # 验证调整后的图片
+              Start-Sleep -Seconds 1
+              try {
+                  $imgInfo = python -c "from PIL import Image; import os; img = Image.open(r'$previewPath'); print(f'{img.width}x{img.height}');"
+                  Write-Output "调整后图片尺寸: $imgInfo"
+                  
+                  if ($imgInfo -eq "${expectedWidth}x${expectedHeight}") {
+                      Write-Output "预览图片验证成功"
+                      return $true
+                  }
+              } catch {
+                  Write-Output "图片验证失败: $_"
+                  return $false
+              }
             }
             
             return $false
