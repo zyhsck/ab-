@@ -5,6 +5,8 @@ import logging
 import pathlib
 import shutil
 import subprocess
+import time
+from PIL import Image  # 添加Pillow导入
 from binary import WatchfaceBinary
 
 # 强制UTF-8编码
@@ -39,13 +41,16 @@ class WatchfaceCompiler:
             logging.info(f"Project path: {self.project_path}")
             logging.info(f"Final output directory: {self.final_output_dir}")
             logging.info(f"Temporary output directory: {self.temp_output_dir}")
+            
+            # 添加预览图路径
+            self.preview_path = self.project_path.parent / "images" / "pre.png"
         except Exception as e:
             logging.error(f"Initialization failed: {str(e)}", exc_info=True)
             raise
 
     def compile(self):
         """
-        编译主流程
+        编译主流程（带重试）
         :return: 成功返回True，失败返回False
         """
         try:
@@ -57,9 +62,23 @@ class WatchfaceCompiler:
             output_filename = self.project_path.stem + ".face"
             final_output_file = self.final_output_dir / output_filename
             
-            # 3. 运行编译工具
+            # 3. 首次编译尝试
             if not self._run_compile_tool(output_filename):
-                return False
+                # 检查错误日志，如果是预览图尺寸问题，尝试调整并重试
+                logging.warning("First compilation attempt failed. Attempting to fix preview and retry...")
+                
+                # 尝试调整预览图尺寸
+                if self._fix_preview_size():
+                    logging.info("Preview image resized. Retrying compilation...")
+                    
+                    # 重试编译
+                    if self._run_compile_tool(output_filename):
+                        # 重试成功，继续后续步骤
+                        pass
+                    else:
+                        return False
+                else:
+                    return False
                 
             # 4. 移动输出文件
             if not self._move_output_file(output_filename, final_output_file):
@@ -122,7 +141,6 @@ class WatchfaceCompiler:
             result = subprocess.run(
                 cmd,
                 cwd=str(self.project_path.parent),
-                check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -137,13 +155,54 @@ class WatchfaceCompiler:
             if result.stderr:
                 logging.warning(f"Compiler warnings:\n{result.stderr}")
                 
+            # 检查返回码
+            if result.returncode != 0:
+                logging.error(f"Compilation failed with exit code {result.returncode}")
+                return False
+                
             return True
             
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Compilation failed (exit code {e.returncode}):\n{e.stderr}")
-            return False
         except Exception as e:
             logging.error(f"Command execution error: {str(e)}")
+            return False
+
+    def _fix_preview_size(self):
+        """修复预览图尺寸问题"""
+        try:
+            # 期望的预览图尺寸（从错误日志中提取）
+            expected_size = (230, 328)
+            
+            # 检查预览图是否存在
+            if not self.preview_path.exists():
+                logging.error(f"Preview image not found: {self.preview_path}")
+                return False
+                
+            # 打开并调整图片
+            img = Image.open(self.preview_path)
+            
+            # 检查当前尺寸
+            current_size = img.size
+            if current_size == expected_size:
+                logging.info("Preview already has correct size")
+                return True
+                
+            logging.info(f"Resizing preview from {current_size} to {expected_size}")
+            
+            # 调整尺寸
+            img = img.resize(expected_size, Image.LANCZOS)
+            
+            # 保存到临时文件
+            temp_path = self.preview_path.with_suffix('.tmp.png')
+            img.save(temp_path, "PNG")
+            
+            # 原子替换原文件
+            os.replace(temp_path, self.preview_path)
+            
+            logging.info("Preview image resized successfully")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Failed to resize preview image: {str(e)}")
             return False
 
     def _move_output_file(self, output_filename, final_output_file):
