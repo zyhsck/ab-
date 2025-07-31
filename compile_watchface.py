@@ -1,6 +1,5 @@
 import os
 import sys
-import io
 import logging
 import pathlib
 import shutil
@@ -8,10 +7,6 @@ import subprocess
 import time
 from PIL import Image
 from binary import WatchfaceBinary
-
-# 强制UTF-8编码
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # 配置日志系统
 logging.basicConfig(
@@ -131,12 +126,6 @@ class WatchfaceCompiler:
             self.temp_output_dir.mkdir(parents=True, exist_ok=True)
             logging.info(f"Created temporary output directory: {self.temp_output_dir}")
             
-            # 设置环境变量优化内存
-            env = os.environ.copy()
-            env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
-            env["COMPlus_gcServer"] = "1"  # 启用服务器GC
-            env["COMPlus_gcConcurrent"] = "1"  # 启用并发GC
-            
             # 使用subprocess执行命令
             result = subprocess.run(
                 cmd,
@@ -145,8 +134,7 @@ class WatchfaceCompiler:
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding='utf-8',
-                shell=True,
-                env=env
+                shell=True
             )
             
             # 记录输出
@@ -169,7 +157,7 @@ class WatchfaceCompiler:
     def _fix_preview_size(self):
         """修复预览图尺寸问题"""
         try:
-            # 期望的预览图尺寸（从错误日志中提取）
+            # 期望的预览图尺寸
             expected_size = (230, 328)
             
             # 检查预览图是否存在
@@ -243,7 +231,7 @@ class WatchfaceCompiler:
 
 def main():
     try:
-        # 从环境变量获取路径（GitHub Actions兼容）
+        # 从环境变量获取路径
         project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
         output_dir = os.getenv("OUTPUT_DIR", "output")
         
