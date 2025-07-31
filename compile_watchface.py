@@ -8,6 +8,7 @@ import subprocess
 import re
 import base64
 import time
+import imghdr
 from PIL import Image
 from binary import WatchfaceBinary
 
@@ -69,45 +70,66 @@ class WatchfaceCompiler:
         :param base64_data: Base64编码的图片数据
         """
         try:
-            # 解码Base64数据
-            bytes_data = base64.b64decode(base64_data)
+            # 检查Base64数据是否为空
+            if not base64_data:
+                logging.error("Base64 data is empty")
+                return False
+                
+            # 记录Base64数据长度
+            logging.info(f"Base64 data length: {len(base64_data)}")
+            
+            try:
+                # 解码Base64数据
+                bytes_data = base64.b64decode(base64_data)
+            except Exception as e:
+                logging.error(f"Failed to decode Base64 data: {str(e)}")
+                return False
+                
+            # 记录解码后的字节长度
+            logging.info(f"Decoded image size: {len(bytes_data)} bytes")
             
             # 确保图片目录存在
             self.images_dir.mkdir(parents=True, exist_ok=True)
             
-            # 保存背景图（使用可靠写入方式）
-            temp_pic_path = self.pic_path.with_suffix('.tmp.png')
-            with open(temp_pic_path, "wb") as f:
+            # 保存到临时文件
+            temp_path = self.pic_path.with_suffix('.tmp')
+            with open(temp_path, "wb") as f:
                 f.write(bytes_data)
+            logging.info(f"Saved temporary image to: {temp_path}")
+            
+            # 检测图片格式
+            image_format = imghdr.what(temp_path)
+            if not image_format:
+                logging.error("Unsupported image format")
+                return False
+                
+            logging.info(f"Detected image format: {image_format}")
+            
+            # 重命名为正确格式
+            temp_image_path = temp_path.with_suffix(f'.{image_format}')
+            os.rename(temp_path, temp_image_path)
+            logging.info(f"Renamed temporary image to: {temp_image_path}")
             
             # 验证图片完整性
             try:
-                img = Image.open(temp_pic_path)
+                img = Image.open(temp_image_path)
                 img.verify()  # 验证图片完整性
                 img.close()
             except Exception as e:
                 logging.error(f"Invalid image file: {str(e)}")
                 return False
+                
+            # 转换为PNG格式
+            img = Image.open(temp_image_path)
+            img.save(self.pic_path, "PNG")
+            logging.info(f"Converted image to PNG format: {self.pic_path}")
             
-            # 原子替换原文件
-            os.replace(temp_pic_path, self.pic_path)
-            logging.info(f"Saved background image to: {self.pic_path}")
-            
-            # 复制为预览图（使用可靠写入方式）
-            temp_pre_path = self.pre_path.with_suffix('.tmp.png')
-            shutil.copyfile(self.pic_path, temp_pre_path)
-            
-            # 验证预览图完整性
-            try:
-                img = Image.open(temp_pre_path)
-                img.verify()
-                img.close()
-            except Exception as e:
-                logging.error(f"Invalid preview image: {str(e)}")
-                return False
-            
-            os.replace(temp_pre_path, self.pre_path)
+            # 复制为预览图
+            shutil.copyfile(self.pic_path, self.pre_path)
             logging.info(f"Copied background image to preview image: {self.pre_path}")
+            
+            # 清理临时文件
+            os.remove(temp_image_path)
             
             return True
         except Exception as e:
