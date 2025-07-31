@@ -7,8 +7,6 @@ import shutil
 import subprocess
 import re
 import base64
-import time
-import imghdr
 from PIL import Image
 from binary import WatchfaceBinary
 
@@ -16,23 +14,12 @@ from binary import WatchfaceBinary
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# 创建原始字节流处理器
-class RawStreamHandler(logging.StreamHandler):
-    def emit(self, record):
-        try:
-            msg = self.format(record) + self.terminator
-            self.stream.buffer.write(msg.encode('utf-8'))
-            self.flush()
-        except Exception:
-            self.handleError(record)
-
 # 配置日志系统
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-handler = RawStreamHandler(sys.stdout)
-handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(handler)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 
 class WatchfaceCompiler:
     def __init__(self, project_path, output_dir):
@@ -64,139 +51,203 @@ class WatchfaceCompiler:
             logging.error(f"Initialization failed: {str(e)}", exc_info=True)
             raise
 
-    def set_background_image(self, base64_data):
+    def compile(self):
         """
-        设置背景图片
-        :param base64_data: Base64编码的图片数据
+        编译主流程（带重试）
+        :return: 成功返回True，失败返回False
         """
         try:
-            # 检查Base64数据是否为空
-            if not base64_data:
-                logging.error("Base64 data is empty")
+            # 1. 验证项目文件
+            if not self._validate_project_file():
                 return False
                 
-            # 记录Base64数据长度
-            logging.info(f"Base64 data length: {len(base64_data)}")
+            # 2. 准备输出文件名
+            output_filename = self.project_path.stem + ".face"
+            final_output_file = self.final_output_dir / output_filename
             
-            # 检查最小长度（PNG文件头至少需要8字节）
-            if len(base64_data) < 100:
-                logging.error(f"Base64 data is too short: {len(base64_data)} characters")
-                return False
+            # 3. 首次编译尝试
+            if not self._run_compile_tool(output_filename):
+                # 检查错误日志，如果是预览图尺寸问题，尝试调整并重试
+                logging.warning("First compilation failed. Attempting to fix preview and retry...")
                 
-            try:
-                # 解码Base64数据
-                bytes_data = base64.b64decode(base64_data)
-            except Exception as e:
-                logging.error(f"Failed to decode Base64 data: {str(e)}")
-                return False
-                
-            # 记录解码后的字节长度
-            logging.info(f"Decoded image size: {len(bytes_data)} bytes")
-            
-            # 检查最小文件大小（PNG文件头至少需要8字节）
-            if len(bytes_data) < 8:
-                logging.error(f"Decoded image is too small: {len(bytes_data)} bytes")
-                return False
-                
-            # 确保图片目录存在
-            self.images_dir.mkdir(parents=True, exist_ok=True)
-            
-            # 保存到临时文件
-            temp_path = self.pic_path.with_suffix('.tmp')
-            with open(temp_path, "wb") as f:
-                f.write(bytes_data)
-            logging.info(f"Saved temporary image to: {temp_path}")
-            
-            # 检测图片格式
-            image_format = imghdr.what(temp_path)
-            if not image_format:
-                # 尝试手动检测常见格式
-                image_format = self._detect_image_format(bytes_data)
-                if not image_format:
-                    logging.error("Unsupported image format")
-                    return False
+                # 尝试调整预览图尺寸
+                if self._fix_preview_size():
+                    logging.info("Preview image resized. Retrying compilation...")
                     
-            logging.info(f"Detected image format: {image_format}")
-            
-            # 重命名为正确格式
-            temp_image_path = temp_path.with_suffix(f'.{image_format}')
-            os.rename(temp_path, temp_image_path)
-            logging.info(f"Renamed temporary image to: {temp_image_path}")
-            
-            # 验证图片完整性
-            try:
-                img = Image.open(temp_image_path)
-                img.verify()  # 验证图片完整性
-                img.close()
-            except Exception as e:
-                logging.error(f"Invalid image file: {str(e)}")
+                    # 重试编译
+                    if self._run_compile_tool(output_filename):
+                        # 重试成功，继续后续步骤
+                        pass
+                    else:
+                        return False
+                else:
+                    return False
+                
+            # 4. 移动输出文件
+            if not self._move_output_file(output_filename, final_output_file):
                 return False
                 
-            # 转换为PNG格式
-            img = Image.open(temp_image_path)
-            img.save(self.pic_path, "PNG")
-            logging.info(f"Converted image to PNG format: {self.pic_path}")
+            # 5. 设置表盘ID
+            return self._set_watchface_id(final_output_file)
             
-            # 复制为预览图
-            shutil.copyfile(self.pic_path, self.pre_path)
-            logging.info(f"Copied background image to preview image: {self.pre_path}")
-            
-            # 清理临时文件
-            os.remove(temp_image_path)
-            
-            return True
         except Exception as e:
-            logging.error(f"Failed to set background image: {str(e)}")
+            logging.error(f"Compilation error: {str(e)}", exc_info=True)
             return False
 
-    def _detect_image_format(self, bytes_data):
-        """
-        手动检测图片格式
-        :param bytes_data: 图片字节数据
-        :return: 图片格式字符串（如'png', 'jpg'），如果无法检测返回None
-        """
-        # PNG文件头: 89 50 4E 47 0D 0A 1A 0A
-        if len(bytes_data) >= 8 and bytes_data.startswith(b'\x89PNG\r\n\x1a\n'):
-            return 'png'
+    def _fix_preview_size(self):
+        """修复预览图尺寸问题"""
+        try:
+            # 期望的预览图尺寸（从错误日志中提取）
+            expected_size = (230, 328)
             
-        # JPEG文件头: FF D8 FF
-        if len(bytes_data) >= 3 and bytes_data.startswith(b'\xFF\xD8\xFF'):
-            return 'jpg'
+            # 检查预览图是否存在
+            if not self.pre_path.exists():
+                logging.error(f"Preview image not found: {self.pre_path}")
+                return False
+                
+            # 打开并调整图片
+            img = Image.open(self.pre_path)
             
-        # GIF文件头: GIF87a or GIF89a
-        if len(bytes_data) >= 6 and (bytes_data.startswith(b'GIF87a') or bytes_data.startswith(b'GIF89a')):
-            return 'gif'
+            # 检查当前尺寸
+            current_size = img.size
+            if current_size == expected_size:
+                logging.info("Preview already has correct size")
+                return True
+                
+            logging.info(f"Resizing preview from {current_size} to {expected_size}")
             
-        return None
+            # 调整尺寸
+            img = img.resize(expected_size, Image.LANCZOS)
+            
+            # 保存到临时文件
+            temp_path = self.pre_path.with_suffix('.tmp.png')
+            img.save(temp_path, "PNG")
+            
+            # 原子替换原文件
+            os.replace(temp_path, self.pre_path)
+            
+            logging.info("Preview image resized successfully")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Failed to resize preview image: {str(e)}")
+            return False
 
-    # ... 其余代码保持不变 ...
+    def _validate_project_file(self):
+        """验证项目文件"""
+        if not self.project_path.exists():
+            logging.error(f"Project file not found: {self.project_path}")
+            return False
+            
+        file_size = os.path.getsize(self.project_path)
+        if file_size == 0:
+            logging.error(f"Project file is empty: {self.project_path}")
+            return False
+            
+        logging.info(f"Project file size: {file_size} bytes")
+        return True
+
+    def _run_compile_tool(self, output_filename):
+        """运行编译工具"""
+        try:
+            # 编译工具路径（相对于脚本位置）
+            compile_tool = pathlib.Path(__file__).parent / "compile.exe"
+            
+            if not compile_tool.exists():
+                logging.error(f"Compiler tool not found at: {compile_tool}")
+                return False
+            
+            # 准备命令参数
+            cmd = [
+                str(compile_tool),
+                "-b",
+                str(self.project_path),
+                "output",  # 编译工具会在项目目录下创建output子目录
+                output_filename,
+                "1461256429"
+            ]
+            
+            logging.info(f"Executing command: {' '.join(cmd)}")
+            
+            # 确保临时输出目录存在
+            self.temp_output_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Created temporary output directory: {self.temp_output_dir}")
+            
+            # 使用subprocess执行命令
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.project_path.parent),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                shell=True
+            )
+            
+            # 记录输出
+            if result.stdout:
+                logging.info(f"Compiler output:\n{result.stdout}")
+            if result.stderr:
+                logging.warning(f"Compiler warnings:\n{result.stderr}")
+                
+            # 检查返回码
+            if result.returncode != 0:
+                logging.error(f"Compilation failed with exit code {result.returncode}")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logging.error(f"Command execution error: {str(e)}")
+            return False
+
+    def _move_output_file(self, output_filename, final_output_file):
+        """移动输出文件到最终目录"""
+        # 编译工具生成的临时输出文件路径
+        temp_output_file = self.temp_output_dir / output_filename
+        
+        if not temp_output_file.exists():
+            logging.error(f"Output file not generated: {temp_output_file}")
+            return False
+            
+        try:
+            # 移动文件到最终输出目录
+            shutil.move(str(temp_output_file), str(final_output_file))
+            logging.info(f"Moved output file to: {final_output_file}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to move output file: {str(e)}")
+            return False
+
+    def _set_watchface_id(self, output_file):
+        """设置表盘ID"""
+        try:
+            # 检查文件大小
+            file_size = os.path.getsize(output_file)
+            if file_size < 9:
+                logging.error(f"File too small to set ID: {file_size} bytes")
+                return False
+                
+            # 设置ID
+            binary = WatchfaceBinary(str(output_file))
+            binary.setId("123456789")
+            logging.info(f"Set watch face ID: 123456789")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to set watch face ID: {str(e)}")
+            return False
 
 def main():
     try:
         # 从环境变量获取路径
         project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
         output_dir = os.getenv("OUTPUT_DIR", "output")
-        image_base64 = os.getenv("IMAGE_BASE64", "")
-        
-        # 记录环境变量值
-        logging.info(f"PROJECT_PATH: {project_path}")
-        logging.info(f"OUTPUT_DIR: {output_dir}")
-        logging.info(f"IMAGE_BASE64 length: {len(image_base64) if image_base64 else 'empty'}")
         
         compiler = WatchfaceCompiler(
             project_path=project_path,
             output_dir=output_dir
         )
         
-        # 设置背景图片
-        if image_base64:
-            if not compiler.set_background_image(image_base64):
-                logging.error("Failed to set background image")
-                return 1
-        else:
-            logging.warning("No image data provided, using default image")
-        
-        # 执行编译
         if compiler.compile():
             print("Compile success")
             return 0
