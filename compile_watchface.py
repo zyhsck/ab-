@@ -105,24 +105,32 @@ class WatchfaceCompiler:
             # 3. 首次编译尝试
             success, error_output = self._run_compile_tool(output_filename)
             if not success:
+                # 检查错误日志，如果是预览图尺寸问题，尝试调整并重试
+                logging.warning("First compilation failed. Attempting to fix preview and retry...")
+                
                 # 解析错误日志，获取期望的预览图尺寸
                 expected_size = self._parse_expected_preview_size(error_output)
                 if expected_size:
-                    logging.warning(f"First compilation failed. Expected preview size: {expected_size}")
-                    # 调整预览图尺寸
+                    logging.info(f"Expected preview size: {expected_size}")
+                    
+                    # 尝试调整预览图尺寸
                     if self._adjust_preview_size(expected_size):
                         logging.info("Preview image resized. Retrying compilation...")
-                        # 删除临时输出目录，确保重新编译
+                        
+                        # 关键修复：删除临时输出目录，确保重新编译
                         if self.temp_output_dir.exists():
                             shutil.rmtree(self.temp_output_dir)
                             logging.info(f"Deleted temporary output directory: {self.temp_output_dir}")
+                        
                         # 重试编译
                         success, _ = self._run_compile_tool(output_filename)
                     else:
                         logging.error("Failed to resize preview image.")
+                        return False
                 else:
                     logging.error("Could not parse expected preview size from errors.")
-            
+                    return False
+                
             if not success:
                 return False
                 
@@ -164,6 +172,14 @@ class WatchfaceCompiler:
                 
             # 打开并调整图片
             img = Image.open(self.pre_path)
+            
+            # 检查当前尺寸
+            current_size = img.size
+            if current_size == expected_size:
+                logging.info("Preview already has correct size")
+                return True
+                
+            logging.info(f"Resizing preview from {current_size} to {expected_size}")
             
             # 调整尺寸
             img = img.resize(expected_size, Image.LANCZOS)
