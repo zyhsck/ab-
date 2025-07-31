@@ -21,13 +21,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Increase virtual memory
+            # 2. Increase virtual memory
       - name: Increase virtual memory to 16GB
         run: |
-          wmic computersystem set AutomaticManagedPagefile=False
-          wmic pagefileset create name="C:\pagefile.sys"
-          wmic pagefileset where name="C:\pagefile.sys" set InitialSize=16384,MaximumSize=16384
+          # 禁用自动管理
+          wmic computersystem set AutomaticManagedPagefile=False || echo "AutomaticManagedPagefile already disabled"
+          
+          # 尝试创建页面文件（如果不存在）
+          wmic pagefileset create name="C:\pagefile.sys" || echo "Pagefile already exists"
+          
+          # 设置页面文件大小
+          wmic pagefileset where name="C:\pagefile.sys" set InitialSize=16384,MaximumSize=16384 || echo "Pagefile size already set"
+          
+          # 列出页面文件信息
+          wmic pagefileset list brief
+          
           echo "Virtual memory increased to 16GB"
+        shell: cmd
 
       # 3. Process input data
       - name: Parse input JSON
