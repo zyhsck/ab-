@@ -48,7 +48,6 @@ jobs:
           echo "model_path_file=$env:RUNNER_TEMP\model_path.txt" >> $env:GITHUB_OUTPUT
           echo "base64_file=$env:RUNNER_TEMP\image_base64.txt" >> $env:GITHUB_OUTPUT
 
-      # 4. Prepare project files
             # 4. Prepare project directory
       - name: Prepare project directory
         id: prepare-project
@@ -123,6 +122,8 @@ jobs:
           PROJECT_PATH: "${{ steps.prepare-project.outputs.fprj_path }}"
           OUTPUT_DIR: "${{ github.workspace }}/output"
         run: python compile_watchface.py
+      
+      
 
 
 
