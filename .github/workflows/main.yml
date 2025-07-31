@@ -49,76 +49,82 @@ jobs:
           echo "base64_file=$env:RUNNER_TEMP\image_base64.txt" >> $env:GITHUB_OUTPUT
 
       # 4. Prepare project files
+            # 4. Prepare project directory
       - name: Prepare project directory
         id: prepare-project
         run: |
-          $modelPath = Get-Content "$env:RUNNER_TEMP\model_path.txt"
+          # 设置项目目录路径
           $projectDir = "project"
+          
+          # 获取模型路径
+          $modelPath = Get-Content "$env:RUNNER_TEMP\model_path.txt"
+          
+          # 复制模型目录结构到项目目录
           New-Item -Type Directory -Path $projectDir -Force
-          
-          # 复制整个模板目录结构
           $sourceTemplateDir = Split-Path $modelPath -Parent
-          Copy-Item "$sourceTemplateDir\*" $projectDir -Recurse -Force
+          Copy-Item -Path "$sourceTemplateDir\*" -Destination $projectDir -Recurse -Force
           
-          # 查找并重命名FPRJ文件
-          $fprjFile = Get-ChildItem $projectDir -Filter "*.fprj" -Recurse | Select-Object -First 1
-          if ($fprjFile) {
-              $newFprjPath = Join-Path $fprjFile.Directory "fprj.fprj"
-              Rename-Item $fprjFile.FullName $newFprjPath -Force
-              Write-Output "Renamed project file: $($fprjFile.FullName) -> $newFprjPath"
-          } else {
-              Write-Error "No FPRJ file found"
+          # 查找FPRJ文件
+          $fprjFiles = @(Get-ChildItem -Path $projectDir -Filter "*.fprj" -Recurse)
+          if ($fprjFiles.Count -eq 0) {
+              Write-Error "No FPRJ file found in project directory."
               exit 1
           }
           
-          # 获取Base64内容
-          $base64Content = Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw
+          # 重命名第一个找到的FPRJ文件
+          $fprjOriginal = $fprjFiles[0]
+          $newName = "fprj.fprj"
+          $newPath = Join-Path $fprjOriginal.Directory $newName
+          Rename-Item -Path $fprjOriginal.FullName -NewName $newName -Force
+          Write-Output "Renamed project file: $($fprjOriginal.FullName) -> $newPath"
           
-          # 检查Base64数据长度
-          if ($base64Content.Length -lt 100) {
-              Write-Warning "Base64 data is too short: $($base64Content.Length) characters. Using default image."
-          } else {
-              try {
-                  # 解码Base64数据
-                  $bytes = [Convert]::FromBase64String($base64Content)
-                  
-                  # 查找images目录
-                  $imagesDir = Get-ChildItem $projectDir -Filter "images" -Recurse | Select-Object -First 1
-                  if (-not $imagesDir) {
-                      $imagesDir = Join-Path $projectDir "images"
-                      New-Item -Type Directory -Path $imagesDir -Force
-                  }
-                  
-                  # 保存背景图
-                  $picPath = Join-Path $imagesDir.FullName "pic.png"
-                  [IO.File]::WriteAllBytes($picPath, $bytes)
-                  Write-Output "Saved background image to: $picPath"
-                  
-                  # 保存预览图
-                  $prePath = Join-Path $imagesDir.FullName "pre.png"
-                  Copy-Item $picPath $prePath -Force
-                  Write-Output "Saved preview image to: $prePath"
-              } catch {
-                  Write-Warning "Failed to process image data: $_"
-              }
-          }
+          # 保存Base64图片到正确的路径
+          $base64Content = Get-Content "${{ steps.parse-input.outputs.base64_file }}" -Raw
+          $bytes = [Convert]::FromBase64String($base64Content)
+          
+          # 获取fprj文件所在目录
+          $fprjDir = Split-Path $newPath -Parent
+          
+          # 创建images目录（如果不存在）
+          $imagesDir = Join-Path $fprjDir "images"
+          New-Item -ItemType Directory -Path $imagesDir -Force
+          
+          # 保存背景图
+          $picPath = Join-Path $imagesDir "pic.png"
+          [IO.File]::WriteAllBytes($picPath, $bytes)
+          Write-Output "Saved background image to: $picPath"
+          
+          # 保存预览图
+          $prePath = Join-Path $imagesDir "pre.png"
+          [IO.File]::WriteAllBytes($prePath, $bytes)
+          Write-Output "Saved preview image to: $prePath"
           
           # 创建输出目录
           New-Item -Type Directory -Path "$projectDir\output" -Force
           
           # 输出路径变量
           echo "project_path=$projectDir" >> $env:GITHUB_OUTPUT
-          echo "fprj_path=$newFprjPath" >> $env:GITHUB_OUTPUT
-
-      # 5. Set up Python
+          echo "fprj_path=$newPath" >> $env:GITHUB_OUTPUT
+          echo "preview_path=$prePath" >> $env:GITHUB_OUTPUT
+      
+      # 5. Set up Python with Pillow
       - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      # 6. Install Pillow for image processing
-      - name: Install dependencies
+      
+      - name: Install Pillow for image resizing
         run: pip install Pillow
+
+      # 6. Compile watch face
+      - name: Compile Watch Face
+        id: compile-watchface
+        env:
+          PROJECT_PATH: "${{ steps.prepare-project.outputs.fprj_path }}"
+          OUTPUT_DIR: "${{ github.workspace }}/output"
+        run: python compile_watchface.py
+
+
 
       # 7. Run compilation script
       - name: Compile Watch Face
