@@ -78,6 +78,11 @@ class WatchfaceCompiler:
             # 记录Base64数据长度
             logging.info(f"Base64 data length: {len(base64_data)}")
             
+            # 检查最小长度（PNG文件头至少需要8字节）
+            if len(base64_data) < 100:
+                logging.error(f"Base64 data is too short: {len(base64_data)} characters")
+                return False
+                
             try:
                 # 解码Base64数据
                 bytes_data = base64.b64decode(base64_data)
@@ -88,6 +93,11 @@ class WatchfaceCompiler:
             # 记录解码后的字节长度
             logging.info(f"Decoded image size: {len(bytes_data)} bytes")
             
+            # 检查最小文件大小（PNG文件头至少需要8字节）
+            if len(bytes_data) < 8:
+                logging.error(f"Decoded image is too small: {len(bytes_data)} bytes")
+                return False
+                
             # 确保图片目录存在
             self.images_dir.mkdir(parents=True, exist_ok=True)
             
@@ -100,9 +110,12 @@ class WatchfaceCompiler:
             # 检测图片格式
             image_format = imghdr.what(temp_path)
             if not image_format:
-                logging.error("Unsupported image format")
-                return False
-                
+                # 尝试手动检测常见格式
+                image_format = self._detect_image_format(bytes_data)
+                if not image_format:
+                    logging.error("Unsupported image format")
+                    return False
+                    
             logging.info(f"Detected image format: {image_format}")
             
             # 重命名为正确格式
@@ -136,6 +149,26 @@ class WatchfaceCompiler:
             logging.error(f"Failed to set background image: {str(e)}")
             return False
 
+    def _detect_image_format(self, bytes_data):
+        """
+        手动检测图片格式
+        :param bytes_data: 图片字节数据
+        :return: 图片格式字符串（如'png', 'jpg'），如果无法检测返回None
+        """
+        # PNG文件头: 89 50 4E 47 0D 0A 1A 0A
+        if len(bytes_data) >= 8 and bytes_data.startswith(b'\x89PNG\r\n\x1a\n'):
+            return 'png'
+            
+        # JPEG文件头: FF D8 FF
+        if len(bytes_data) >= 3 and bytes_data.startswith(b'\xFF\xD8\xFF'):
+            return 'jpg'
+            
+        # GIF文件头: GIF87a or GIF89a
+        if len(bytes_data) >= 6 and (bytes_data.startswith(b'GIF87a') or bytes_data.startswith(b'GIF89a')):
+            return 'gif'
+            
+        return None
+
     # ... 其余代码保持不变 ...
 
 def main():
@@ -144,6 +177,11 @@ def main():
         project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
         output_dir = os.getenv("OUTPUT_DIR", "output")
         image_base64 = os.getenv("IMAGE_BASE64", "")
+        
+        # 记录环境变量值
+        logging.info(f"PROJECT_PATH: {project_path}")
+        logging.info(f"OUTPUT_DIR: {output_dir}")
+        logging.info(f"IMAGE_BASE64 length: {len(image_base64) if image_base64 else 'empty'}")
         
         compiler = WatchfaceCompiler(
             project_path=project_path,
@@ -155,6 +193,8 @@ def main():
             if not compiler.set_background_image(image_base64):
                 logging.error("Failed to set background image")
                 return 1
+        else:
+            logging.warning("No image data provided, using default image")
         
         # 执行编译
         if compiler.compile():
