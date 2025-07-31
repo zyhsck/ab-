@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import re
 import base64
+import time
 from PIL import Image
 from binary import WatchfaceBinary
 
