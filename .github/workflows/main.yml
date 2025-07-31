@@ -21,21 +21,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-            # 2. Increase virtual memory
+      # 2. Increase virtual memory
       - name: Increase virtual memory to 16GB
         run: |
-          # 禁用自动管理
           wmic computersystem set AutomaticManagedPagefile=False || echo "AutomaticManagedPagefile already disabled"
-          
-          # 尝试创建页面文件（如果不存在）
           wmic pagefileset create name="C:\pagefile.sys" || echo "Pagefile already exists"
-          
-          # 设置页面文件大小
           wmic pagefileset where name="C:\pagefile.sys" set InitialSize=16384,MaximumSize=16384 || echo "Pagefile size already set"
-          
-          # 列出页面文件信息
           wmic pagefileset list brief
-          
           echo "Virtual memory increased to 16GB"
         shell: cmd
 
@@ -146,7 +138,12 @@ jobs:
         env:
           PROJECT_PATH: "${{ steps.prepare-project.outputs.fprj_path }}"
           OUTPUT_DIR: "${{ github.workspace }}/output"
-        run: python compile_watchface.py
+          IMAGE_BASE64: "${{ steps.parse-input.outputs.base64_file }}"
+        run: |
+          # 确保Python脚本使用最新版本
+          Get-Content compile_watchface.py | Out-String
+          python compile_watchface.py
+        shell: pwsh
 
       # 7. Verify output
       - name: Verify Output File
