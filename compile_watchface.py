@@ -5,7 +5,8 @@ import logging
 import pathlib
 import shutil
 import subprocess
-import time
+import re
+import base64
 from PIL import Image
 from binary import WatchfaceBinary
 
@@ -53,11 +54,39 @@ class WatchfaceCompiler:
             logging.info(f"Final output directory: {self.final_output_dir}")
             logging.info(f"Temporary output directory: {self.temp_output_dir}")
             
-            # 添加预览图路径
-            self.preview_path = self.project_path.parent / "images" / "pre.png"
+            # 添加图片路径
+            self.images_dir = self.project_path.parent / "images"
+            self.pic_path = self.images_dir / "pic.png"
+            self.pre_path = self.images_dir / "pre.png"
         except Exception as e:
             logging.error(f"Initialization failed: {str(e)}", exc_info=True)
             raise
+
+    def set_background_image(self, base64_data):
+        """
+        设置背景图片
+        :param base64_data: Base64编码的图片数据
+        """
+        try:
+            # 解码Base64数据
+            bytes_data = base64.b64decode(base64_data)
+            
+            # 确保图片目录存在
+            self.images_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 保存背景图
+            with open(self.pic_path, "wb") as f:
+                f.write(bytes_data)
+            logging.info(f"Saved background image to: {self.pic_path}")
+            
+            # 复制为预览图（不调整大小）
+            shutil.copyfile(self.pic_path, self.pre_path)
+            logging.info(f"Copied background image to preview image: {self.pre_path}")
+            
+            return True
+        except Exception as e:
+            logging.error(f"Failed to set background image: {str(e)}")
+            return False
 
     def compile(self):
         """
@@ -74,27 +103,28 @@ class WatchfaceCompiler:
             final_output_file = self.final_output_dir / output_filename
             
             # 3. 首次编译尝试
-            if not self._run_compile_tool(output_filename):
-                # 检查错误日志，如果是预览图尺寸问题，尝试调整并重试
-                logging.warning("First compilation attempt failed. Attempting to fix preview and retry...")
-                
-                # 尝试调整预览图尺寸
-                if self._fix_preview_size():
-                    logging.info("Preview image resized. Retrying compilation...")
-                    
-                    # 关键修复：删除临时输出目录，确保重新编译
-                    if self.temp_output_dir.exists():
-                        shutil.rmtree(self.temp_output_dir)
-                        logging.info(f"Deleted temporary output directory: {self.temp_output_dir}")
-                    
-                    # 重试编译
-                    if self._run_compile_tool(output_filename):
-                        # 重试成功，继续后续步骤
-                        pass
+            success, error_output = self._run_compile_tool(output_filename)
+            if not success:
+                # 解析错误日志，获取期望的预览图尺寸
+                expected_size = self._parse_expected_preview_size(error_output)
+                if expected_size:
+                    logging.warning(f"First compilation failed. Expected preview size: {expected_size}")
+                    # 调整预览图尺寸
+                    if self._adjust_preview_size(expected_size):
+                        logging.info("Preview image resized. Retrying compilation...")
+                        # 删除临时输出目录，确保重新编译
+                        if self.temp_output_dir.exists():
+                            shutil.rmtree(self.temp_output_dir)
+                            logging.info(f"Deleted temporary output directory: {self.temp_output_dir}")
+                        # 重试编译
+                        success, _ = self._run_compile_tool(output_filename)
                     else:
-                        return False
+                        logging.error("Failed to resize preview image.")
                 else:
-                    return False
+                    logging.error("Could not parse expected preview size from errors.")
+            
+            if not success:
+                return False
                 
             # 4. 移动输出文件
             if not self._move_output_file(output_filename, final_output_file):
@@ -105,6 +135,56 @@ class WatchfaceCompiler:
             
         except Exception as e:
             logging.error(f"Compilation error: {str(e)}", exc_info=True)
+            return False
+
+    def _parse_expected_preview_size(self, error_output):
+        """
+        从错误信息中解析期望的预览图尺寸
+        :param error_output: 错误输出内容
+        :return: (width, height) 元组，如果解析失败返回None
+        """
+        # 错误信息格式： "Error: Preview has wrong size: ... expected: ..."
+        pattern = r'expected: (\d+)x(\d+)'
+        match = re.search(pattern, error_output)
+        if match:
+            return (int(match.group(1)), int(match.group(2)))
+        return None
+
+    def _adjust_preview_size(self, expected_size):
+        """
+        调整预览图尺寸
+        :param expected_size: 期望尺寸 (width, height)
+        :return: 成功返回True，失败返回False
+        """
+        try:
+            # 检查预览图是否存在
+            if not self.pre_path.exists():
+                logging.error(f"Preview image not found: {self.pre_path}")
+                return False
+                
+            # 打开并调整图片
+            img = Image.open(self.pre_path)
+            
+            # 调整尺寸
+            img = img.resize(expected_size, Image.LANCZOS)
+            
+            # 保存到临时文件
+            temp_path = self.pre_path.with_suffix('.tmp.png')
+            img.save(temp_path, "PNG")
+            
+            # 原子替换原文件
+            os.replace(temp_path, self.pre_path)
+            
+            # 验证调整后的尺寸
+            img_after = Image.open(self.pre_path)
+            if img_after.size == expected_size:
+                logging.info(f"Verified preview size: {img_after.size}")
+                return True
+            else:
+                logging.error(f"Resize failed! Expected: {expected_size}, Actual: {img_after.size}")
+                return False
+        except Exception as e:
+            logging.error(f"Failed to resize preview image: {str(e)}")
             return False
 
     def _validate_project_file(self):
@@ -129,7 +209,7 @@ class WatchfaceCompiler:
             
             if not compile_tool.exists():
                 logging.error(f"Compiler tool not found at: {compile_tool}")
-                return False
+                return False, ""
             
             # 准备命令参数
             cmd = [
@@ -159,66 +239,19 @@ class WatchfaceCompiler:
             )
             
             # 记录输出
-            if result.stdout:
-                logging.info(f"Compiler output:\n{result.stdout}")
-            if result.stderr:
-                logging.warning(f"Compiler warnings:\n{result.stderr}")
+            output_text = result.stdout + "\n" + result.stderr
+            logging.info(f"Compiler output:\n{output_text}")
                 
             # 检查返回码
             if result.returncode != 0:
                 logging.error(f"Compilation failed with exit code {result.returncode}")
-                return False
+                return False, output_text
                 
-            return True
+            return True, output_text
             
         except Exception as e:
             logging.error(f"Command execution error: {str(e)}")
-            return False
-
-    def _fix_preview_size(self):
-        """修复预览图尺寸问题"""
-        try:
-            # 期望的预览图尺寸
-            expected_size = (230, 328)
-            
-            # 检查预览图是否存在
-            if not self.preview_path.exists():
-                logging.error(f"Preview image not found: {self.preview_path}")
-                return False
-                
-            # 打开并调整图片
-            img = Image.open(self.preview_path)
-            
-            # 检查当前尺寸
-            current_size = img.size
-            if current_size == expected_size:
-                logging.info("Preview already has correct size")
-                return True
-                
-            logging.info(f"Resizing preview from {current_size} to {expected_size}")
-            
-            # 调整尺寸
-            img = img.resize(expected_size, Image.LANCZOS)
-            
-            # 保存到临时文件
-            temp_path = self.preview_path.with_suffix('.tmp.png')
-            img.save(temp_path, "PNG")
-            
-            # 原子替换原文件
-            os.replace(temp_path, self.preview_path)
-            
-            # 验证调整后的尺寸
-            img_after = Image.open(self.preview_path)
-            if img_after.size == expected_size:
-                logging.info(f"Verified preview size: {img_after.size}")
-                return True
-            else:
-                logging.error(f"Resize failed! Expected: {expected_size}, Actual: {img_after.size}")
-                return False
-            
-        except Exception as e:
-            logging.error(f"Failed to resize preview image: {str(e)}")
-            return False
+            return False, str(e)
 
     def _move_output_file(self, output_filename, final_output_file):
         """移动输出文件到最终目录"""
@@ -261,12 +294,20 @@ def main():
         # 从环境变量获取路径
         project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
         output_dir = os.getenv("OUTPUT_DIR", "output")
+        image_base64 = os.getenv("IMAGE_BASE64", "")
         
         compiler = WatchfaceCompiler(
             project_path=project_path,
             output_dir=output_dir
         )
         
+        # 设置背景图片
+        if image_base64:
+            if not compiler.set_background_image(image_base64):
+                logging.error("Failed to set background image")
+                return 1
+        
+        # 执行编译
         if compiler.compile():
             print("Compile success")
             return 0
