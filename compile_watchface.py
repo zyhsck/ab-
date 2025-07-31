@@ -78,7 +78,7 @@ class WatchfaceCompiler:
                     if self._adjust_preview_size(expected_size):
                         logging.info("Preview image resized. Retrying compilation...")
                         
-                        # 删除临时输出目录，确保重新编译
+                        # 关键修复：删除临时输出目录，确保重新编译
                         if self.temp_output_dir.exists():
                             shutil.rmtree(self.temp_output_dir)
                             logging.info(f"Deleted temporary output directory: {self.temp_output_dir}")
