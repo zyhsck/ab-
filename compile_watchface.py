@@ -6,7 +6,7 @@ import pathlib
 import shutil
 import subprocess
 import time
-from PIL import Image  # 添加Pillow导入
+from PIL import Image
 from binary import WatchfaceBinary
 
 # 强制UTF-8编码
@@ -241,8 +241,7 @@ class WatchfaceCompiler:
             logging.error(f"Failed to set watch face ID: {str(e)}")
             return False
 
-
-if __name__ == "__main__":
+def main():
     try:
         # 从环境变量获取路径（GitHub Actions兼容）
         project_path = os.getenv("PROJECT_PATH", "project/fprj.fprj")
@@ -255,10 +254,13 @@ if __name__ == "__main__":
         
         if compiler.compile():
             print("Compile success")
-            sys.exit(0)
+            return 0
         else:
             print("Compile failed")
-            sys.exit(1)
+            return 1
     except Exception as e:
         print(f"Program error: {str(e)}")
-        sys.exit(1)
+        return 1
+
+if __name__ == "__main__":
+    sys.exit(main())
