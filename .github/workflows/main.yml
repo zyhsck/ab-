@@ -170,66 +170,66 @@ jobs:
                 
                 try {
                     $output = python -c "
-import sys
-from PIL import Image
-import traceback
-import os
-import time
-
-# 检查文件是否被占用
-def is_file_locked(file_path):
-    try:
-        with open(file_path, 'a') as f:
-            pass
-        return False
-    except (IOError, OSError):
-        return True
-
-file_path = r'$path'
-if is_file_locked(file_path):
-    print(f'文件被占用，等待重试...')
-    time.sleep($retryCount * 0.5)  # 指数退避等待
-    
-try:
-    img = Image.open(file_path)
-    
-    # 验证文件是否完整
-    try:
-        img.load()
-    except OSError as e:
-        print(f'图像加载失败: {e}')
-        if 'truncated' in str(e):
-            print('文件可能被截断 - 需要重新写入')
-            with open(file_path, 'rb') as f:
-                content = f.read()
-                if len(content) < os.path.getsize(file_path):
-                    raise Exception('文件内容不完整')
-            raise
-        else:
-            raise
-    
-    # 调整图像尺寸
-    new_size = ($expectedWidth, $expectedHeight)
-    img = img.resize(new_size, Image.LANCZOS)
-    
-    # 临时文件写入
-    temp_path = file_path + '.tmp'
-    img.save(temp_path, 'PNG')
-    
-    # 原子替换原文件
-    if os.path.exists(file_path):
-        os.unlink(file_path)
-    os.rename(temp_path, file_path)
-    
-    print('图像调整成功')
-    sys.exit(0)
-    
-except Exception as e:
-    traceback.print_exc()
-    print(f'尝试 #{retryCount} 失败: {e}')
-    time.sleep($retryCount * 0.5)
-    sys.exit(1)
-"
+                      import sys
+                      from PIL import Image
+                      import traceback
+                      import os
+                      import time
+                      
+                      # 检查文件是否被占用
+                      def is_file_locked(file_path):
+                          try:
+                              with open(file_path, 'a') as f:
+                                  pass
+                              return False
+                          except (IOError, OSError):
+                              return True
+                      
+                      file_path = r'$path'
+                      if is_file_locked(file_path):
+                          print(f'文件被占用，等待重试...')
+                          time.sleep($retryCount * 0.5)  # 指数退避等待
+                          
+                      try:
+                          img = Image.open(file_path)
+                          
+                          # 验证文件是否完整
+                          try:
+                              img.load()
+                          except OSError as e:
+                              print(f'图像加载失败: {e}')
+                              if 'truncated' in str(e):
+                                  print('文件可能被截断 - 需要重新写入')
+                                  with open(file_path, 'rb') as f:
+                                      content = f.read()
+                                      if len(content) < os.path.getsize(file_path):
+                                          raise Exception('文件内容不完整')
+                                  raise
+                              else:
+                                  raise
+                          
+                          # 调整图像尺寸
+                          new_size = ($expectedWidth, $expectedHeight)
+                          img = img.resize(new_size, Image.LANCZOS)
+                          
+                          # 临时文件写入
+                          temp_path = file_path + '.tmp'
+                          img.save(temp_path, 'PNG')
+                          
+                          # 原子替换原文件
+                          if os.path.exists(file_path):
+                              os.unlink(file_path)
+                          os.rename(temp_path, file_path)
+                          
+                          print('图像调整成功')
+                          sys.exit(0)
+                          
+                      except Exception as e:
+                          traceback.print_exc()
+                          print(f'尝试 #{retryCount} 失败: {e}')
+                          time.sleep($retryCount * 0.5)
+                          sys.exit(1)
+                          "
                     if ($LASTEXITCODE -eq 0) {
                         $success = $true
                         Write-Output "图像调整成功"
